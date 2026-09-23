@@ -11,14 +11,19 @@ export function Card({
   subtitle,
   children,
   actions,
+  className = '',
 }: {
   title?: string;
   subtitle?: string;
   children: React.ReactNode;
   actions?: React.ReactNode;
+  /** Ghép thêm class từ ngoài — chủ yếu để đặt khoảng cách giữa các thẻ. */
+  className?: string;
 }) {
   return (
-    <section className="rounded-lg border border-[var(--border)] bg-[var(--panel)]">
+    <section
+      className={`rounded-lg border border-[var(--border)] bg-[var(--panel)] ${className}`.trim()}
+    >
       {(title || actions) && (
         <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
           <div>

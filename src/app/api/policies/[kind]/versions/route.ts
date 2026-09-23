@@ -5,6 +5,7 @@ import { vnPitParamsSchema, vnPitJsonSchema } from '@/policy/tax-params';
 import { vnSiParamsSchema, vnSiJsonSchema } from '@/policy/si-params';
 import { vnSalaryParamsSchema, vnSalaryJsonSchema } from '@/policy/salary-params';
 import { approvalParamsSchema, approvalJsonSchema } from '@/policy/approval-params';
+import { printParamsSchema, printJsonSchema } from '@/policy/print-params';
 import { ensureKind } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
@@ -49,6 +50,11 @@ const VALIDATORS: Record<
     nameVi: 'Ngưỡng duyệt',
     schema: approvalParamsSchema,
     json: approvalJsonSchema,
+  },
+  PRINT: {
+    nameVi: 'Mẫu in',
+    schema: printParamsSchema,
+    json: printJsonSchema,
   },
 };
 

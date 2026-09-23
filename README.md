@@ -145,6 +145,14 @@ src/policy/approval-params.ts ★ LOẠI THỨ TƯ: ngưỡng duyệt
 src/engine/approval.ts        resolveApprovalChain — trả về CHUỖI người duyệt
 scripts/seed-approval.ts      seed + demo chuỗi duyệt
 tests/approval.spec.ts        21 test cho ngưỡng duyệt
+
+src/policy/print-params.ts  ★ LOẠI THỨ NĂM: mẫu in (HTML + CSS là dữ liệu)
+src/engine/print.ts         renderTemplate / escapeHtml / soThanhChu / renderDocument
+src/lib/payslip.ts          nối 3 engine → dữ liệu phiếu lương
+src/app/print/page.tsx      danh sách mẫu in
+src/app/print/[code]/route.ts  trả về MỘT tài liệu HTML in được
+scripts/seed-print.ts       seed mẫu phiếu lương
+tests/print.spec.ts         59 test: XSS, template, số thành chữ, định dạng
 ```
 
 ### Đã kiểm chứng
@@ -156,7 +164,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              155/155 test
+  ✓ vitest              214/214 test
 ```
 
 Test đáng chú ý:
@@ -179,7 +187,8 @@ npm run demo                # demo đổi luật thuế
 npm run seed:bhxh           # seed loại chính sách VN_BHXH
 npm run seed:salary         # seed công thức lương + demo cả ba engine
 npm run seed:approval       # seed ngưỡng duyệt
-npm run seed:all            # cả bốn loại chính sách
+npm run seed:print          # seed mẫu in
+npm run seed:all            # cả năm loại chính sách
 npm run dev                 # giao diện tại http://localhost:3100
 ```
 
@@ -204,12 +213,20 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **2** | Next.js UI: trang quản lý chính sách, form tự sinh từ JSON Schema | ✅ xong, đã kiểm chứng |
 | **3** | Mở rộng loại chính sách: ~~BHXH~~ ✅ · ~~công thức lương~~ ✅ · ~~ngưỡng duyệt~~ ✅ | ✅ xong, đã kiểm chứng |
 | **4** | Workflow designer (React Flow) + rule engine biểu thức | ⬜ |
-| **5** | Report builder + print format (HTML/CSS → PDF) | ⬜ |
+| **5** | ~~Print format~~ ✅ (mẫu in là dữ liệu, render HTML, trình duyệt xuất PDF) · report builder ⬜ | 🔄 phần in xong |
 | **6** | Chuyển nghiệp vụ HRM sang platform (Employee, PayRun thành entity có chính sách) | ⬜ |
 
 ---
 
 ## Ghi chú thiết kế
+
+**Vì sao không dùng Puppeteer/Chromium để xuất PDF.** Chromium ~170MB tải về và ~300MB RAM khi chạy, trong sandbox 2GB đang chạy chung PostgreSQL và dev server. Đổi lại ta được một file PDF — trong khi trình duyệt đã có sẵn "In → Lưu thành PDF" với chất lượng dàn trang tốt hơn hầu hết thư viện. ERPNext cũng làm đúng vậy: Print Format render HTML, trình duyệt lo phần PDF. Cái khó và đáng giá nằm ở TẦNG TEMPLATE, và đó là thứ `engine/print.ts` làm.
+
+**Dữ liệu in LUÔN được escape.** Mẫu (`body`, `css`) do quản trị soạn nên đáng tin và được chèn nguyên văn. DỮ LIỆU thì không: một ô "lý do nghỉ" chứa `<script>` mà không escape là stored XSS chạy trên máy kế toán trưởng mỗi lần in phiếu lương. Muốn chèn HTML thô phải viết `| raw` một cách có chủ ý — và nó hiện rõ khi đọc mẫu. Tầng schema còn chặn `<script>` và thuộc tính sự kiện ngay lúc lưu.
+
+**Hai quy tắc `@page` là một cái bẫy.** `renderDocument` sinh `@page` theo `paperSize`/`orientation`/`marginMm`; nếu CSS của mẫu cũng khai báo `@page` thì hai quy tắc cascade với nhau và có thể làm mất lề đã cấu hình. Bản in vẫn đẹp trên màn hình, chỉ sai khi in thật — loại lỗi không ai phát hiện cho tới khi kế toán phàn nàn. CSS mẫu seed đã bỏ `@page`, có comment giải thích.
+
+**Không dùng `.default()` trong schema tham số — lần thứ hai.** `.default('')` trên một trường làm kiểu input khác kiểu output, mà `z.ZodType<T>` khai báo `T` cho cả hai, nên mọi chỗ gọi `resolvePolicy` vỡ kiểu. Đã xảy ra với `exemptMealCapMonthly` ở VN_PIT, giờ lặp lại với `expr` ở mẫu in. Thành nguyên tắc: tham số cấu hình không có giá trị ngầm định.
 
 **Chuỗi duyệt lấy từ đường duyệt của luật, không từ thứ bậc toàn cục.** Bản đầu tiên của `resolveApprovalChain` dựng chuỗi bằng "mọi cấp có `order` ≤ cấp khớp". Sai: `HR_HEAD` có thứ bậc 3, nằm giữa `DEPT_HEAD` (2) và `CHIEF_ACCOUNTANT` (4), nên sẽ bị kéo vào duyệt một đề nghị thanh toán 300 triệu — dù nhân sự không liên quan gì tới chi tiền. Mỗi luật phải định nghĩa đường duyệt RIÊNG; `order` chỉ để sắp xếp hiển thị. Có test khoá đúng trường hợp này.
 
