@@ -14,6 +14,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+
+// BUG ĐÃ SỬA: file này gọi /api/ bằng `fetch()` trần nên KHÔNG gửi header
+// Authorization -> mọi lời gọi nhận 401, và người dùng chỉ thấy "HTTP 401" mà
+// không hiểu vì sao (vừa mới đăng nhập xong). `api()` trong client-token.ts tự
+// gắn Bearer token và tự xử lý 401 (xoá token, đưa về /login).
+import { api } from '@/lib/client-token';
 import {
   Alert,
   Button,
@@ -58,7 +64,7 @@ export default function NewVersionPage() {
   // Nạp JSON Schema của loại chính sách
   useEffect(() => {
     if (!kind) return;
-    fetch(`/api/policies/${encodeURIComponent(kind)}`)
+    api(`/api/policies/${encodeURIComponent(kind)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.json();
@@ -98,7 +104,7 @@ export default function NewVersionPage() {
     }
 
     try {
-      const res = await fetch(`/api/policies/${encodeURIComponent(kind)}/versions`, {
+      const res = await api(`/api/policies/${encodeURIComponent(kind)}/versions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -130,12 +136,14 @@ export default function NewVersionPage() {
       const versionId: string = body?.data?.versionId;
 
       if (activateNow && versionId) {
-        const act = await fetch(
+        // Chỗ thứ BA dùng fetch trần — grep theo mẫu `fetch(`/api/` KHÔNG bắt
+        // được vì URL nằm ở dòng kế tiếp. Test dùng regex cho phép nhảy dòng nên
+        // bắt được. Đó là lý do cần test chứ không phải một lệnh grep trong tài liệu.
+        const act = await api(
           `/api/policies/${encodeURIComponent(kind)}/versions/${versionId}/activate`,
           {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ actor: 'web-user', reason: reason || null }),
+            json: { actor: 'web-user', reason: reason || null },
           },
         );
         const actBody = await act.json();

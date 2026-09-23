@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { api } from '@/lib/client-token';
 import { useRouter } from 'next/navigation';
 import type { WorkflowAction } from '@/engine/workflow';
 import { Alert } from '@/components/ui';
@@ -59,10 +60,12 @@ export function ApprovalActions({
     setBusy(action);
     setError(null);
     try {
-      const res = await fetch(`/api/approvals/${requestId}`, {
+      // BUG ĐÃ SỬA: `fetch()` trần không gửi Authorization nên nút Duyệt/Từ chối
+      // LUÔN nhận 401 — tức là toàn bộ luồng phê duyệt không dùng được từ giao
+      // diện. Chuyển sang api() để tự gắn token và tự xử lý hết hạn.
+      const res = await api(`/api/approvals/${requestId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, comment, actorId: actor || null }),
+        json: { action, comment, actorId: actor || null },
       });
       const data = (await res.json()) as {
         state?: string;

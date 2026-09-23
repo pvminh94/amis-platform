@@ -139,9 +139,12 @@ function tsxFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+// Cấp module để mọi describe dùng chung.
+const SRC = new URL('../src/', import.meta.url).pathname;
+const ALL_TSX = [...tsxFiles(join(SRC, 'app')), ...tsxFiles(join(SRC, 'components'))];
+
 describe('không mở endpoint có xác thực bằng thẻ <a href> trần', () => {
-  const SRC = new URL('../src/', import.meta.url).pathname;
-  const files = [...tsxFiles(join(SRC, 'app')), ...tsxFiles(join(SRC, 'components'))];
+  const files = ALL_TSX;
 
   it('có file để kiểm tra', () => {
     expect(files.length).toBeGreaterThan(10);
@@ -191,5 +194,54 @@ describe('không mở endpoint có xác thực bằng thẻ <a href> trần', ()
     // Nếu danh sách này khác rỗng thì có một nút trên giao diện bấm vào là nhận
     // 401. Dùng `api()` + blob thay thế (xem batch-download.tsx).
     expect(bad).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Client component gọi /api/ bằng `fetch()` trần thì KHÔNG gửi header
+// Authorization, nên luôn nhận 401 — và người dùng chỉ thấy "HTTP 401" dù vừa
+// đăng nhập xong. Đã xảy ra thật ở 3 chỗ:
+//   policies/[kind]/new (tải schema + tạo phiên bản) -> nút "phiên bản mới" chết
+//   approval-actions    (duyệt / từ chối)            -> cả luồng phê duyệt chết
+// Phải đi qua `api()` trong src/lib/client-token.ts: tự gắn Bearer token và tự
+// xử lý 401.
+// ---------------------------------------------------------------------------
+
+/** Chỗ được phép dùng fetch trần — KÈM LÝ DO. */
+const RAW_FETCH_ALLOWED: Record<string, string> = {
+  // Login: chưa có token nào để gắn. Dùng api() cũng không sai nhưng vô nghĩa.
+  'components/login-form.tsx': 'login (chưa có token) và change-password (phải tự gắn token của bước 1; dùng api() thì 401 sẽ redirect về /login và phá luồng đổi mật khẩu)',
+};
+
+describe('client component phải gọi /api/ qua helper api()', () => {
+  const bad: string[] = [];
+  for (const f of ALL_TSX) {
+    const src = readFileSync(f, 'utf8');
+    const rel = relative(SRC, f);
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    // fetch( theo sau là một chuỗi bắt đầu bằng /api/
+    if (/fetch\(\s*[`"']\/api\//.test(code) && !RAW_FETCH_ALLOWED[rel]) bad.push(rel);
+  }
+
+  it('danh sách cho phép không chứa file không tồn tại', () => {
+    const rels = new Set(ALL_TSX.map((f) => relative(SRC, f)));
+    expect(Object.keys(RAW_FETCH_ALLOWED).filter((k) => !rels.has(k))).toEqual([]);
+  });
+
+  it('không chỗ nào gọi /api/ bằng fetch trần', () => {
+    // Nếu danh sách này khác rỗng thì có một nút trên giao diện bấm vào là 401.
+    expect(bad).toEqual([]);
+  });
+
+  it('file được cho phép phải TỰ gắn Authorization', () => {
+    // Cho phép fetch trần chỉ hợp lệ nếu chỗ đó tự gắn header. Nếu không thì nó
+    // cũng chết y như những chỗ vừa sửa.
+    for (const rel of Object.keys(RAW_FETCH_ALLOWED)) {
+      const src = readFileSync(join(SRC, rel), 'utf8');
+      // login thì không cần (chưa có token); change-password thì cần.
+      if (src.includes('/api/auth/change-password')) {
+        expect(src).toContain('Authorization: `Bearer');
+      }
+    }
   });
 });
