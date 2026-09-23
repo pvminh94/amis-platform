@@ -103,6 +103,12 @@ const VARS = {
   otNormalHours: 10,
   otWeekendHours: 4,
   otHolidayHours: 0,
+  // 5 ca đêm × 8 giờ + vài giờ OT đêm đủ cả bốn hệ số của Điều 57 NĐ 145/2020
+  nightHours: 40,
+  otNightNormalWithDayOtHours: 2,
+  otNightNormalNoDayOtHours: 3,
+  otNightWeekendHours: 1,
+  otNightHolidayHours: 0,
   hourlyRate: 120_000,
   mealDays: 22,
   lateCount: 5,

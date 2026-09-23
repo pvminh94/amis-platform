@@ -16,17 +16,20 @@ import { vnSalaryParamsSchema } from '@/policy/salary-params';
 import { vnSiParamsSchema } from '@/policy/si-params';
 import { vnPitParamsSchema } from '@/policy/tax-params';
 import { calculateSalary } from '@/engine/salary';
+import { aggregateAttendanceForPayroll, type PayrollAttendanceVars } from '@/lib/attendance';
 import { calculateSocialInsurance, type WageRegion } from '@/engine/si';
 import { calculateTaxableIncome, calculateProgressivePit } from '@/engine/pit';
 
-export interface AttendanceInput {
-  workedDays: number;
+/**
+ * Đầu vào chấm công cho một nhân viên = kết quả tổng hợp từ `daily_attendance`
+ * cộng hai thứ không nằm trong bảng chấm công (KPI và tạm ứng).
+ *
+ * Kế thừa `PayrollAttendanceVars` thay vì liệt kê lại: hai danh sách trường trùng
+ * nhau ở hai file là hai chỗ phải sửa mỗi khi thêm một khoản, và quên một chỗ thì
+ * engine lương ném "thiếu biến" cho cả kỳ.
+ */
+export interface AttendanceInput extends PayrollAttendanceVars {
   kpiScore: number;
-  otNormalHours: number;
-  otWeekendHours: number;
-  otHolidayHours: number;
-  mealDays: number;
-  lateCount: number;
   advanceAmount: number;
 }
 
@@ -68,12 +71,25 @@ export function standardWorkingDays(year: number, month: number): number {
   return count;
 }
 
+/**
+ * Dùng khi KHÔNG có dữ liệu chấm công cho nhân viên đó.
+ *
+ * `useRealAttendance` bật thì hàm này KHÔNG được gọi cho nhân viên có dữ liệu —
+ * và nếu một nhân viên có lịch mà thiếu hẳn dữ liệu thì thà ném lỗi còn hơn âm
+ * thầm trả đủ lương cả tháng cho người không đi làm.
+ */
 const DEFAULT_ATTENDANCE = (std: number): AttendanceInput => ({
   workedDays: std,
   kpiScore: 100,
+  absentDays: 0,
+  nightHours: 0,
   otNormalHours: 0,
   otWeekendHours: 0,
   otHolidayHours: 0,
+  otNightNormalWithDayOtHours: 0,
+  otNightNormalNoDayOtHours: 0,
+  otNightWeekendHours: 0,
+  otNightHolidayHours: 0,
   mealDays: std,
   lateCount: 0,
   advanceAmount: 0,
@@ -165,6 +181,11 @@ export async function generatePayRun(
         otNormalHours: att.otNormalHours,
         otWeekendHours: att.otWeekendHours,
         otHolidayHours: att.otHolidayHours,
+        nightHours: att.nightHours,
+        otNightNormalWithDayOtHours: att.otNightNormalWithDayOtHours,
+        otNightNormalNoDayOtHours: att.otNightNormalNoDayOtHours,
+        otNightWeekendHours: att.otNightWeekendHours,
+        otNightHolidayHours: att.otNightHolidayHours,
         mealDays: att.mealDays,
         lateCount: att.lateCount,
         advanceAmount: att.advanceAmount,

@@ -101,27 +101,83 @@ export default async function PayRunDetailPage({
               </tr>
             </thead>
             <tbody>
-              {slips.map(({ s, region }) => (
-                <tr key={s.id} className="border-b border-[var(--border)]">
-                  <td className="py-2 pr-3 font-mono text-xs">{s.employeeCode}</td>
-                  <td className="py-2 pr-3">{s.fullName}</td>
-                  <td className="py-2 pr-3 text-xs">{region}</td>
-                  <td className="num py-2 pr-3">{fmt(s.earningsTotal)}</td>
-                  <td className="num py-2 pr-3">{fmt(s.siEmployee)}</td>
-                  <td className="num py-2 pr-3">{fmt(s.pit)}</td>
-                  <td className="num py-2 pr-3 font-medium">{fmt(s.netPay)}</td>
-                  <td className="py-2 text-right">
-                    <a
-                      href={`/print/PHIEU_LUONG?payslip=${s.id}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs text-[var(--accent)] hover:underline"
-                    >
-                      In ↗
-                    </a>
-                  </td>
-                </tr>
-              ))}
+              {slips.map(({ s, region }) => {
+                const comps = (s.components ?? []) as {
+                  code: string;
+                  label: string;
+                  formula: string;
+                  amount: number;
+                  taxable: boolean;
+                  inInsuranceBase: boolean;
+                }[];
+                return (
+                  <>
+                    <tr key={s.id} className="border-b border-[var(--border)]">
+                      <td className="py-2 pr-3 font-mono text-xs">{s.employeeCode}</td>
+                      <td className="py-2 pr-3">{s.fullName}</td>
+                      <td className="py-2 pr-3 text-xs">{region}</td>
+                      <td className="num py-2 pr-3">{fmt(s.earningsTotal)}</td>
+                      <td className="num py-2 pr-3">{fmt(s.siEmployee)}</td>
+                      <td className="num py-2 pr-3">{fmt(s.pit)}</td>
+                      <td className="num py-2 pr-3 font-medium">{fmt(s.netPay)}</td>
+                      <td className="py-2 text-right">
+                        <a
+                          href={`/print/PHIEU_LUONG?payslip=${s.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-[var(--accent)] hover:underline"
+                        >
+                          In ↗
+                        </a>
+                      </td>
+                    </tr>
+                    {/*
+                      Chi tiết từng thành phần. TRƯỚC ĐÂY KHÔNG CÓ: bảng lương chỉ
+                      hiện bốn con số tổng, còn "vì sao ra số này" thì phải đọc
+                      jsonb trong database. Với một hệ thống mà công thức lương sửa
+                      được trên giao diện thì không hiện được công thức đã chạy là
+                      thiếu mất một nửa giá trị — người ta sửa công thức mà không
+                      thấy nó áp vào đâu.
+                    */}
+                    <tr key={`${s.id}-d`} className="border-b border-[var(--border)]">
+                      <td colSpan={8} className="px-0 py-0">
+                        <details className="group">
+                          <summary className="cursor-pointer py-1 text-xs text-[var(--muted)] hover:text-[var(--accent)]">
+                            {comps.length} thành phần · công thức và số tiền
+                          </summary>
+                          <table className="mb-2 mt-1 w-full text-xs">
+                            <tbody>
+                              {comps.map((c) => (
+                                <tr key={c.code} className="border-t border-[var(--border)]/50">
+                                  <td className="py-1 pr-2 font-mono text-[10px] text-[var(--muted)]">
+                                    {c.code}
+                                  </td>
+                                  <td className="py-1 pr-2">{c.label}</td>
+                                  <td className="py-1 pr-2 font-mono text-[10px] text-[var(--muted)]">
+                                    {c.formula}
+                                  </td>
+                                  <td className="py-1 pr-2 text-[10px]">
+                                    {[c.taxable ? 'thuế' : null, c.inInsuranceBase ? 'BH' : null]
+                                      .filter(Boolean)
+                                      .join(', ')}
+                                  </td>
+                                  <td
+                                    className={
+                                      'num py-1 ' + (c.amount < 0 ? 'text-[var(--danger,#c00)]' : '')
+                                    }
+                                  >
+                                    {fmt(c.amount)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </details>
+                      </td>
+                    </tr>
+                  </>
+                );
+              })}
             </tbody>
           </table>
         </div>

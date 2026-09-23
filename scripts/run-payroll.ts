@@ -22,6 +22,7 @@ const { generatePayRun, assertPayRunConsistent, standardWorkingDays } = await im
   '../src/lib/payroll.js'
 );
 const { eq, sql } = await import('drizzle-orm');
+const { aggregateAttendanceForPayroll } = await import('../src/lib/attendance.js');
 
 const db = getDb();
 const fmt = (n: number) => n.toLocaleString('vi-VN');
@@ -48,9 +49,29 @@ console.log('═'.repeat(78) + '\n');
 // --- 1. Nhân viên ---------------------------------------------------------
 await db.execute(sql`DELETE FROM payslips`);
 await db.execute(sql`DELETE FROM pay_runs`);
-await db.execute(sql`DELETE FROM employees`);
+// KHÔNG xoá employees nữa.
+//
+// Bản trước có `DELETE FROM employees` rồi insert lại. Giờ `raw_punches` trỏ vào
+// employees bằng khoá ngoại ON DELETE RESTRICT nên lệnh đó sẽ NỔ — và RESTRICT ở
+// đây là cố ý: xoá một nhân viên không được kéo theo bằng chứng chấm công của họ.
+// Nên chuyển sang UPSERT: dữ liệu chấm công sống sót qua mỗi lần chạy lại.
 for (const e of ROSTER) {
-  await db.insert(employees).values({ ...e, active: true });
+  await db
+    .insert(employees)
+    .values({ ...e, active: true })
+    .onConflictDoUpdate({
+      target: employees.employeeCode,
+      set: {
+        fullName: e.fullName,
+        department: e.department,
+        wageRegion: e.wageRegion,
+        trainedWorker: e.trainedWorker,
+        dependents: e.dependents,
+        baseSalary: e.baseSalary,
+        hourlyRate: e.hourlyRate,
+        active: true,
+      },
+    });
 }
 console.log(`[1] ✓ Đã nạp ${ROSTER.length} nhân viên (4 vùng lương, 6 bộ phận)`);
 
@@ -60,14 +81,46 @@ const MONTH = 9;
 const std = standardWorkingDays(YEAR, MONTH);
 console.log(`[2] Kỳ ${String(MONTH).padStart(2, '0')}/${YEAR} — ${std} ngày công chuẩn (thứ Hai→thứ Bảy)\n`);
 
-// Vài nhân viên có chấm công riêng, còn lại dùng mặc định
-const attendance = {
-  NV001: { workedDays: 22, kpiScore: 85, otNormalHours: 10, otWeekendHours: 4, lateCount: 5, advanceAmount: 2_000_000 },
-  NV002: { workedDays: std, kpiScore: 95, otNormalHours: 20, otWeekendHours: 8, otHolidayHours: 0 },
-  NV003: { workedDays: std, kpiScore: 60, otNormalHours: 0, lateCount: 8 },
-  NV010: { workedDays: std, kpiScore: 100, otNormalHours: 30, otWeekendHours: 16, otHolidayHours: 8 },
-  NV009: { workedDays: 15, kpiScore: 70 },
+// --- Chấm công đọc TỪ DATABASE, không phải số gõ tay -----------------------
+//
+// Bản trước có một map { NV001: { workedDays: 22, otNormalHours: 10, … } } viết
+// cứng trong file. Đó chính là "mock trong bộ nhớ" — bảng lương chạy ra số đẹp
+// nhưng không liên quan gì tới quẹt thẻ. Nay đọc từ daily_attendance.
+const attVars = await aggregateAttendanceForPayroll(db, { periodYear: YEAR, periodMonth: MONTH });
+const covered = ROSTER.filter((e) => attVars[e.employeeCode]).length;
+if (covered === 0) {
+  console.log(
+    `\n[!] CHƯA CÓ CHẤM CÔNG cho kỳ ${MONTH}/${YEAR}. Mọi người sẽ được tính đủ ${std} ngày công\n` +
+      `    theo mặc định — chạy 'npm run seed:attendance' để có dữ liệu thật.\n`,
+  );
+} else {
+  console.log(`[2] ✓ Chấm công: ${covered}/${ROSTER.length} nhân viên có dữ liệu kỳ ${MONTH}/${YEAR}`);
+}
+
+/**
+ * KPI và tạm ứng KHÔNG nằm trong bảng chấm công — chúng đến từ đánh giá năng lực
+ * và từ kế toán. Ở hệ thống thật hai module đó cấp; trong demo này để số cố định
+ * và ghi rõ, chứ không trộn lẫn với dữ liệu chấm công thật.
+ */
+const OTHER: Record<string, { kpiScore: number; advanceAmount: number }> = {
+  NV001: { kpiScore: 85, advanceAmount: 2_000_000 },
+  NV002: { kpiScore: 95, advanceAmount: 0 },
+  NV003: { kpiScore: 60, advanceAmount: 0 },
+  NV010: { kpiScore: 100, advanceAmount: 0 },
 };
+
+const attendance = Object.fromEntries(
+  ROSTER.map((e) => {
+    const real = attVars[e.employeeCode];
+    const other = OTHER[e.employeeCode] ?? { kpiScore: 100, advanceAmount: 0 };
+    return [
+      e.employeeCode,
+      real
+        ? { ...real, ...other }
+        : { workedDays: std, kpiScore: other.kpiScore, advanceAmount: other.advanceAmount },
+    ];
+  }),
+);
 
 const result = await generatePayRun({ periodYear: YEAR, periodMonth: MONTH, attendance, actor: 'payroll-admin' });
 

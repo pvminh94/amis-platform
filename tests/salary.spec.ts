@@ -27,9 +27,17 @@ const VARS = {
   workedDays: 22,
   standardDays: 22,
   kpiScore: 85,
+  // OT BAN NGÀY (đã trừ phần đêm)
   otNormalHours: 10,
   otWeekendHours: 4,
   otHolidayHours: 0,
+  // 5 ca đêm × 8 giờ
+  nightHours: 40,
+  // OT ban đêm, mỗi biến một hệ số theo Điều 57 NĐ 145/2020
+  otNightNormalWithDayOtHours: 2,
+  otNightNormalNoDayOtHours: 3,
+  otNightWeekendHours: 1,
+  otNightHolidayHours: 0,
   hourlyRate: 120_000,
   mealDays: 22,
   lateCount: 5,
@@ -193,6 +201,48 @@ describe('Engine lương: tính đúng từng thành phần', () => {
     expect(byCode(r, 'LUONG_CO_BAN')?.amount).toBe(25_000_000);
   });
 
+  it('OT ban ngày: 150% / 200% / 300%', () => {
+    // 120.000 × (10×1,5 + 4×2 + 0×3) = 120.000 × 23 = 2.760.000
+    expect(byCode(r, 'LUONG_OT')?.amount).toBe(2_760_000);
+  });
+
+  it('phụ cấp làm đêm 30% — Điều 98 khoản 2', () => {
+    // 120.000 × 40 giờ × 30% = 1.440.000
+    expect(byCode(r, 'PHU_CAP_LAM_DEM')?.amount).toBe(1_440_000);
+  });
+
+  it('OT ban đêm: BỐN hệ số khác nhau, không gộp làm một', () => {
+    // 120.000 × (2×2,1 + 3×2,0 + 1×2,7 + 0×3,9)
+    //         = 120.000 × (4,2 + 6,0 + 2,7 + 0) = 120.000 × 12,9 = 1.548.000
+    // Nếu gộp hai trường hợp ngày thường thành 2,0 thì thiếu 2×0,1×120.000 = 24.000đ.
+    expect(byCode(r, 'LUONG_OT_DEM')?.amount).toBe(1_548_000);
+  });
+
+  it('giờ đêm không bị trả hai lần (OT ngày và OT đêm rời nhau)', () => {
+    // otNight* là phần ĐÊM, ot*Hours là phần BAN NGÀY — hai tập rời nhau nên cộng
+    // hai thành phần không nhân đôi giờ nào. Kiểm bằng cách cho 1 giờ OT đêm và
+    // 0 giờ OT ngày: tổng phải đúng bằng 210% của một giờ, không phải 360%.
+    const one = calculateSalary(
+      {
+        variables: {
+          ...VARS,
+          otNormalHours: 0,
+          otWeekendHours: 0,
+          otHolidayHours: 0,
+          otNightNormalWithDayOtHours: 1,
+          otNightNormalNoDayOtHours: 0,
+          otNightWeekendHours: 0,
+          otNightHolidayHours: 0,
+          nightHours: 0,
+        },
+      },
+      SEED_SALARY_VN_STD,
+    );
+    expect(byCode(one, 'LUONG_OT')?.amount).toBe(0);
+    expect(byCode(one, 'LUONG_OT_DEM')?.amount).toBe(252_000); // 120.000 × 2,1
+    expect(byCode(one, 'PHU_CAP_LAM_DEM')?.amount).toBe(0);
+  });
+
   it('thành phần sau dùng được kết quả thành phần trước', () => {
     // 25.000.000 × 85/100 = 21.250.000
     expect(byCode(r, 'LUONG_KPI')?.amount).toBe(21_250_000);
@@ -210,16 +260,22 @@ describe('Engine lương: tính đúng từng thành phần', () => {
   });
 
   it('tổng thu nhập / khấu trừ / ròng', () => {
-    // 25.000.000 + 21.250.000 + 2.760.000 + 660.000
-    expect(r.earningsTotal).toBe(49_670_000);
+    //   lương cơ bản      25.000.000
+    // + KPI 85%           21.250.000
+    // + OT ban ngày        2.760.000
+    // + OT ban đêm         1.548.000   ← mới (Điều 57 NĐ 145/2020)
+    // + phụ cấp đêm 30%    1.440.000   ← mới (Điều 98 khoản 2)
+    // + ăn giữa ca           660.000
+    // =                   52.658.000
+    expect(r.earningsTotal).toBe(52_658_000);
     expect(r.deductionsTotal).toBe(-2_100_000);
-    expect(r.netFromComponents).toBe(47_570_000);
+    expect(r.netFromComponents).toBe(50_558_000);
   });
 
   it('chỉ thành phần có cờ mới vào thu nhập chịu thuế và căn cứ bảo hiểm', () => {
-    // Cả 4 khoản dương đều taxable
-    expect(r.taxableIncome).toBe(49_670_000);
-    // Chỉ LUONG_CO_BAN bật inInsuranceBase — thưởng KPI/OT/ăn ca thì không
+    // Cả 6 khoản dương đều taxable — phụ cấp đêm và OT đêm là thu nhập chịu thuế.
+    expect(r.taxableIncome).toBe(52_658_000);
+    // Chỉ LUONG_CO_BAN bật inInsuranceBase — KPI/OT/phụ cấp đêm/ăn ca thì không.
     expect(r.insuranceBaseSalary).toBe(25_000_000);
   });
 

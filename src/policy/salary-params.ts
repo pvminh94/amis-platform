@@ -242,9 +242,17 @@ export const SEED_SALARY_VN_STD: VnSalaryParams = {
     'workedDays',
     'standardDays',
     'kpiScore',
+    // OT BAN NGÀY — đã trừ phần đêm. Phần đêm nằm ở các biến otNight* bên dưới.
     'otNormalHours',
     'otWeekendHours',
     'otHolidayHours',
+    // Giờ làm việc rơi vào khung 22:00–06:00 (phụ cấp 30%).
+    'nightHours',
+    // OT ban đêm, tách theo Điều 57 NĐ 145/2020 — bốn hệ số khác nhau.
+    'otNightNormalWithDayOtHours',
+    'otNightNormalNoDayOtHours',
+    'otNightWeekendHours',
+    'otNightHolidayHours',
     'hourlyRate',
     'mealDays',
     'lateCount',
@@ -275,10 +283,47 @@ export const SEED_SALARY_VN_STD: VnSalaryParams = {
     },
     {
       code: 'LUONG_OT',
-      label: 'Lương làm thêm giờ (150% / 200% / 300%)',
+      label: 'Lương làm thêm giờ ban ngày (150% / 200% / 300%)',
       sequence: 30,
+      // Điều 98 khoản 1 BLLĐ 2019. Chỉ phần BAN NGÀY: giờ đêm nằm ở LUONG_OT_DEM.
+      // Cộng cả hai vào một công thức thì giờ OT đêm bị trả hai lần, vì
+      // ot_night_minutes là TẬP CON của ot_weekday/weekend/holiday_minutes.
       formula:
         'round(hourlyRate * (otNormalHours * 1.5 + otWeekendHours * 2 + otHolidayHours * 3))',
+      taxable: true,
+      inInsuranceBase: false,
+      allowNegative: false,
+    },
+    {
+      code: 'LUONG_OT_DEM',
+      label: 'Lương làm thêm giờ ban đêm (200% / 210% / 270% / 390%)',
+      sequence: 35,
+      // Điều 57 NĐ 145/2020:
+      //   [hệ số OT] + 30% (làm đêm) + 20% × [lương giờ ban ngày của ngày tương ứng]
+      //
+      // Khoản 20% đó nhân với lương giờ BAN NGÀY, và con số này là 100% hay 150%
+      // tuỳ NGÀY ĐÓ ĐÃ CÓ OT BAN NGÀY hay chưa:
+      //   ngày thường, chưa có OT ngày : 150 + 30 + 20×100 = 200%
+      //   ngày thường, đã có OT ngày   : 150 + 30 + 20×150 = 210%
+      //   ngày nghỉ hằng tuần          : 200 + 30 + 20×200 = 270%
+      //   ngày lễ, tết                 : 300 + 30 + 20×300 = 390%
+      // Gộp hai trường hợp ngày thường thành một hệ số là trả sai 10% trên toàn bộ
+      // giờ OT đêm — và ca đêm là ca có nhiều OT đêm nhất.
+      formula:
+        'round(hourlyRate * (otNightNormalWithDayOtHours * 2.1 + otNightNormalNoDayOtHours * 2.0 ' +
+        '+ otNightWeekendHours * 2.7 + otNightHolidayHours * 3.9))',
+      taxable: true,
+      inInsuranceBase: false,
+      allowNegative: false,
+    },
+    {
+      code: 'PHU_CAP_LAM_DEM',
+      label: 'Phụ cấp làm đêm 30%',
+      sequence: 38,
+      // Điều 98 khoản 2 BLLĐ 2019: làm việc từ 22:00 đến 06:00 được trả THÊM ít
+      // nhất 30% đơn giá giờ của ngày làm việc bình thường — cộng vào lương,
+      // không phải thay thế.
+      formula: 'round(hourlyRate * nightHours * 0.3)',
       taxable: true,
       inInsuranceBase: false,
       allowNegative: false,

@@ -19,7 +19,7 @@
  *    không được tính và không ai biết vì sao.
  */
 
-import { and, eq, gte, inArray, lte } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 
 import {
   dailyAttendance,
@@ -685,4 +685,129 @@ function toRow(
 function absTime(workDate: string, absMinute: number): Date {
   const { date, minutes } = absToCalendar(workDate, absMinute);
   return fromLocal(date, minutes);
+}
+
+// ---------------------------------------------------------------------------
+// TỔNG HỢP CHO KỲ LƯƠNG
+// ---------------------------------------------------------------------------
+
+/**
+ * Biến chấm công cho một nhân viên trong một kỳ lương.
+ *
+ * TÁCH PHẦN ĐÊM RA KHỎI PHẦN BAN NGÀY là điểm mấu chốt của interface này.
+ * `ot_night_minutes` là TẬP CON của `ot_weekday/weekend/holiday_minutes` — nếu đưa
+ * cả hai vào công thức lương thì giờ đêm bị trả HAI LẦN (một lần ở 150% và một
+ * lần ở 210%). Nên các biến `ot*Hours` ở đây là phần BAN NGÀY, đã trừ phần đêm.
+ */
+export interface PayrollAttendanceVars {
+  /** Tổng ngày công quy chuẩn (Σ standard_days) — mẫu số của lương cơ bản. */
+  workedDays: number;
+  /** Số ngày có làm việc thật — cơ sở phụ cấp ăn giữa ca. */
+  mealDays: number;
+  /** Số ngày đi trễ quá grace. */
+  lateCount: number;
+  absentDays: number;
+  /** Giờ làm việc rơi vào khung đêm (phụ cấp 30%, Điều 98 khoản 2). */
+  nightHours: number;
+
+  // --- OT BAN NGÀY (đã trừ phần đêm) -----------------------------------
+  otNormalHours: number;
+  otWeekendHours: number;
+  otHolidayHours: number;
+
+  // --- OT BAN ĐÊM, tách theo Điều 57 NĐ 145/2020 -----------------------
+  /**
+   * OT đêm ngày thường, NGÀY ĐÓ CÓ OT ban ngày → 210%.
+   *   150% + 30% + 20% × 150% = 210%
+   */
+  otNightNormalWithDayOtHours: number;
+  /**
+   * OT đêm ngày thường, ngày đó KHÔNG có OT ban ngày → 200%.
+   *   150% + 30% + 20% × 100% = 200%
+   *
+   * Khoản 20% nhân với "tiền lương giờ vào ban ngày của ngày tương ứng", và con
+   * số đó là 100% hay 150% tuỳ ngày đó đã có OT ban ngày hay chưa. Gộp hai
+   * trường hợp thành một hệ số là trả sai — lệch 10% trên toàn bộ giờ OT đêm.
+   */
+  otNightNormalNoDayOtHours: number;
+  /** OT đêm ngày nghỉ hằng tuần → 270% = 200 + 30 + 20×200. */
+  otNightWeekendHours: number;
+  /** OT đêm ngày lễ, tết → 390% = 300 + 30 + 20×300. */
+  otNightHolidayHours: number;
+}
+
+/**
+ * Tổng hợp `daily_attendance` thành biến lương cho một kỳ.
+ *
+ * Đọc từ bảng DẪN XUẤT chứ không tính lại từ quẹt thô: công ngày đã được tính và
+ * (về nguyên tắc) đã được nhân sự rà soát. Tính lại ở đây thì hai chỗ có thể cho
+ * hai con số khác nhau, và bảng lương sẽ không khớp với trang chấm công.
+ */
+export async function aggregateAttendanceForPayroll(
+  db: Db,
+  opts: { periodYear: number; periodMonth: number; employeeCodes?: string[] },
+): Promise<Record<string, PayrollAttendanceVars>> {
+  const { periodYear, periodMonth } = opts;
+  const ym = `${periodYear}-${String(periodMonth).padStart(2, '0')}`;
+  const from = `${ym}-01`;
+  const lastDay = new Date(Date.UTC(periodYear, periodMonth, 0)).getUTCDate();
+  const to = `${ym}-${String(lastDay).padStart(2, '0')}`;
+
+  // "OT ban ngày" của một dòng = tổng OT trừ phần đêm. Dùng biểu thức này ở cả
+  // bốn nhánh để không chỗ nào quên trừ và trả trùng giờ đêm.
+  const dayOt = sql`(${dailyAttendance.otWeekdayMinutes} + ${dailyAttendance.otWeekendMinutes} + ${dailyAttendance.otHolidayMinutes} - ${dailyAttendance.otNightMinutes})`;
+
+  const conds = [gte(dailyAttendance.workDate, from), lte(dailyAttendance.workDate, to)];
+  if (opts.employeeCodes?.length) {
+    conds.push(inArray(dailyAttendance.employeeCode, opts.employeeCodes));
+  }
+
+  const rows = await db
+    .select({
+      employeeCode: dailyAttendance.employeeCode,
+      workedDays: sql<number>`coalesce(sum(${dailyAttendance.standardDays}),0)::float`,
+      mealDays: sql<number>`count(*) filter (where ${dailyAttendance.workedMinutes} > 0)::int`,
+      lateCount: sql<number>`count(*) filter (where ${dailyAttendance.lateMinutes} > 0)::int`,
+      absentDays: sql<number>`count(*) filter (where ${dailyAttendance.status} = 'ABSENT')::int`,
+      nightHours: sql<number>`coalesce(sum(${dailyAttendance.nightMinutes}),0)::float / 60`,
+      otNormal: sql<number>`coalesce(sum(${dayOt}) filter (where ${dailyAttendance.dayKind} = 'WORKING_DAY'),0)::float / 60`,
+      otWeekend: sql<number>`coalesce(sum(${dayOt}) filter (where ${dailyAttendance.dayKind} = 'WEEKLY_REST'),0)::float / 60`,
+      otHoliday: sql<number>`coalesce(sum(${dayOt}) filter (where ${dailyAttendance.dayKind} = 'PUBLIC_HOLIDAY'),0)::float / 60`,
+      otNightWithDay: sql<number>`coalesce(sum(${dailyAttendance.otNightMinutes}) filter (
+        where ${dailyAttendance.dayKind} = 'WORKING_DAY' and ${dayOt} > 0),0)::float / 60`,
+      otNightNoDay: sql<number>`coalesce(sum(${dailyAttendance.otNightMinutes}) filter (
+        where ${dailyAttendance.dayKind} = 'WORKING_DAY' and ${dayOt} <= 0),0)::float / 60`,
+      otNightWeekend: sql<number>`coalesce(sum(${dailyAttendance.otNightMinutes}) filter (
+        where ${dailyAttendance.dayKind} = 'WEEKLY_REST'),0)::float / 60`,
+      otNightHoliday: sql<number>`coalesce(sum(${dailyAttendance.otNightMinutes}) filter (
+        where ${dailyAttendance.dayKind} = 'PUBLIC_HOLIDAY'),0)::float / 60`,
+    })
+    .from(dailyAttendance)
+    .where(and(...conds))
+    .groupBy(dailyAttendance.employeeCode);
+
+  const out: Record<string, PayrollAttendanceVars> = {};
+  for (const r of rows) {
+    out[r.employeeCode] = {
+      // Làm tròn về 2 chữ số thập phân: phút lẻ chia 60 ra số vô hạn, và để nguyên
+      // thì lương mỗi lần chạy có thể lệch một đồng vì thứ tự cộng dấu phẩy động.
+      workedDays: round2(r.workedDays),
+      mealDays: r.mealDays,
+      lateCount: r.lateCount,
+      absentDays: r.absentDays,
+      nightHours: round2(r.nightHours),
+      otNormalHours: round2(r.otNormal),
+      otWeekendHours: round2(r.otWeekend),
+      otHolidayHours: round2(r.otHoliday),
+      otNightNormalWithDayOtHours: round2(r.otNightWithDay),
+      otNightNormalNoDayOtHours: round2(r.otNightNoDay),
+      otNightWeekendHours: round2(r.otNightWeekend),
+      otNightHolidayHours: round2(r.otNightHoliday),
+    };
+  }
+  return out;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

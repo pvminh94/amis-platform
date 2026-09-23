@@ -194,7 +194,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              526/526 test (16 file)
+  ✓ vitest              536/536 test (16 file)
 ```
 
 Test đáng chú ý:
@@ -277,6 +277,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **10** | ~~Engine ca kíp~~ ✅ ca hành chính / ca gãy / **ca đêm vắt 0h** / xoay 3 ca 4 kíp, khung giờ đêm là tham số, định nghĩa ca là policy kind thứ tám | ✅ |
 | **11** | ~~Ghép cặp quẹt thẻ~~ ✅ FIRST-IN/LAST-OUT theo đoạn, suy giờ khi thiếu quẹt nhưng đánh dấu `MISSING_PUNCH`, OT tách 150/200/300% + phần đêm, grace period và mọi ngưỡng là tham số | ✅ |
 | **12** | ~~Chấm công ngày~~ ✅ 5 bảng (`shift_devices` / `raw_punches` chỉ-thêm / `employee_shifts` / `public_holidays` / `daily_attendance` dẫn xuất), hệ xoay là policy kind thứ mười, API + trang `/attendance`, seed 762 quẹt · 360 ngày công | ✅ |
+| **13** | ~~Nối chấm công vào lương~~ ✅ bỏ map fixture hardcode trong `run-payroll`, đọc `daily_attendance`; thêm phụ cấp đêm 30% + OT đêm 200/210/270/390%; trang kỳ lương hiện **công thức đã chạy** cho từng thành phần | ✅ |
 
 ---
 
@@ -313,6 +314,12 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Việc kiểm tra định nghĩa ca được giao cho chính engine.** `shiftParamsSchema.superRefine` gọi thẳng `resolveShift`: chồng lấn đoạn, giờ nghỉ vượt thời lượng, giờ ra không sau giờ vào, khung đêm vô lý — tất cả chỉ có MỘT bộ luật. Viết lại bộ thứ hai ở tầng validate thì sớm muộn chúng lệch nhau, và bản lệch nhau sẽ cho lưu một ca mà engine không resolve được — tức là lỗi nổ lúc đang xếp lịch chứ không phải lúc người dùng bấm lưu.
 
 **Một lệnh "ensure" mà làm mất dữ liệu thì không còn là ensure.** Bug có sẵn, tìm ra khi `CA_TOI` được đánh số v2 thay vì v1. Hai chỗ cùng sai: (1) nhánh INSERT của `ensureKind` bỏ sót `exclusiveByCode` nên lần tạo đầu tiên luôn nhận `false` từ default của cột; (2) route tạo phiên bản gọi `ensureKind` chỉ với `{code, nameVi, paramsSchema}`, và nhánh UPDATE làm `?? false` — nên **mỗi lần tạo một phiên bản mới, cờ độc quyền của loại đó bị âm thầm đặt về false**. PRINT và REPORT_DEF thoát nạn chỉ vì seed của chúng được chạy lại sau lần POST cuối. Sửa cả hai lớp: `ensureKind` giữ nguyên giá trị hiện có khi người gọi không chỉ định, và `VALIDATORS` khai rõ cờ để route tạo kind đúng ngay lần đầu. Cờ này quyết định cả phạm vi độc quyền lẫn cách đánh số phiên bản, nên sai nó thì `resolvePolicy` không trả lời được "bản nào đang hiệu lực".
+
+**OT ban đêm có BỐN hệ số, không phải ba.** Điều 57 NĐ 145/2020: `[hệ số OT] + 30% + 20% × [lương giờ ban ngày của ngày tương ứng]`. Khoản 20% đó nhân với lương giờ ban ngày, và con số này là **100% hay 150% tuỳ ngày đó đã có OT ban ngày hay chưa** — nên OT đêm ngày thường là 200% hoặc 210%, cuối tuần 270%, ngày lễ 390%. Gộp hai trường hợp ngày thường thành một hệ số là trả sai 10% trên toàn bộ giờ OT đêm, và ca đêm là ca có nhiều OT đêm nhất. Đã kiểm chứng bằng số thật: NV007 có 15,92h OT đêm ngày lễ (390%) + 0,67h ở 200% + 0,50h ở 210% → tính tay 3.739.724đ, khớp đúng phiếu lương.
+
+**Giờ đêm không được trả hai lần.** `ot_night_minutes` là TẬP CON của `ot_weekday/weekend/holiday_minutes`. Nếu đưa cả hai vào công thức thì mỗi giờ OT đêm được trả hai lần — một lần ở 150% và một lần ở 210%. Nên các biến `ot*Hours` đưa vào engine lương là phần **ban ngày, đã trừ phần đêm**, và có test bất biến: tổng bảy biến OT phải đúng bằng tổng OT thô.
+
+**Bảng lương phải hiện được công thức đã chạy.** Trang kỳ lương trước đây chỉ có bốn con số tổng; muốn biết "vì sao ra số này" thì phải đọc jsonb trong database. Với một hệ thống mà công thức lương sửa được trên giao diện thì đó là thiếu mất một nửa giá trị — người ta sửa công thức mà không thấy nó áp vào đâu. Nay mỗi phiếu mở ra được danh sách thành phần kèm **chính chuỗi công thức** và cờ thuế/BH.
 
 **Giờ nghỉ và khe giữa các đoạn không được tính là OT.** Ở hệ số 300% thì sai chỗ này là tiền thật. Nhánh ngày nghỉ/ngày lễ lấy giờ làm theo khoảng bao từ quẹt đầu đến quẹt cuối, và bản đầu tiên trừ không đủ: ca gãy 08:00–12:00 + 14:00–18:00 đi làm ngày lễ được tính **600 phút OT thay vì 480** — trả thừa 50% cho hai tiếng nghỉ giữa ca. Sửa bằng cách trừ cả hai loại khoảng không làm việc: khe giữa các đoạn VÀ khung giờ nghỉ trong từng đoạn. Dữ liệu seed xác nhận: OT lễ giảm từ 129.6h xuống **113.5h**, khớp con số tính tay 112h.
 

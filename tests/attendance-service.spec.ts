@@ -428,3 +428,137 @@ describe('nhất quán giữa service và engine', () => {
     expect(r!.absentMinutes).toBe(fromEngine.absentMinutes);
   });
 });
+
+// ===========================================================================
+// TỔNG HỢP CHO KỲ LƯƠNG
+// ===========================================================================
+
+const { aggregateAttendanceForPayroll } = await import('../src/lib/attendance.js');
+
+/** Tháng dùng cho test tổng hợp — chọn tháng không có dữ liệu seed. */
+const PY = 2031;
+const PM = 3;
+const P01 = '2031-03-03'; // thứ Hai
+const P02 = '2031-03-04';
+
+describe('aggregateAttendanceForPayroll', () => {
+  it('OT đêm ngày thường KHÔNG có OT ban ngày → vào ô 200%', async () => {
+    // Ca CA1 06:00–14:00, quẹt 04:00. Phần 04:00–06:00 là OT nằm TRONG khung đêm
+    // (22:00–06:00) và ngày đó KHÔNG có OT ban ngày nào.
+    const r = await rolled(async (tx) => {
+      const punch = await setupDevice(tx);
+      await roster(tx, P01, 'CA1');
+      await punch(fromLocal(P01, 4 * 60), 'IN');
+      await punch(fromLocal(P01, 14 * 60), 'OUT');
+      await computeAttendance(tx, { from: P01, to: P01, employeeCodes: [EMP] });
+      return aggregateAttendanceForPayroll(tx, { periodYear: PY, periodMonth: PM });
+    });
+    const v = r[EMP]!;
+    expect(v.otNightNormalNoDayOtHours).toBe(2);
+    expect(v.otNightNormalWithDayOtHours).toBe(0);
+  });
+
+  it('OT đêm ngày thường CÓ OT ban ngày → vào ô 210%', async () => {
+    // Cùng ca CA1 nhưng ở lại tới 16:00: ngày đó CÓ OT ban ngày (14:00–16:00),
+    // nên khoản 20% nhân với lương giờ 150% chứ không phải 100% → 210%.
+    // Gộp hai trường hợp này là trả thiếu 10% trên toàn bộ giờ OT đêm.
+    const r = await rolled(async (tx) => {
+      const punch = await setupDevice(tx);
+      await roster(tx, P01, 'CA1');
+      await punch(fromLocal(P01, 4 * 60), 'IN');
+      await punch(fromLocal(P01, 16 * 60), 'OUT');
+      await computeAttendance(tx, { from: P01, to: P01, employeeCodes: [EMP] });
+      return aggregateAttendanceForPayroll(tx, { periodYear: PY, periodMonth: PM });
+    });
+    const v = r[EMP]!;
+    expect(v.otNightNormalWithDayOtHours).toBe(2);
+    expect(v.otNightNormalNoDayOtHours).toBe(0);
+    // Phần OT ban ngày 14:00–16:00 nằm riêng, không bị gộp vào giờ đêm.
+    expect(v.otNormalHours).toBe(2);
+  });
+
+  it('giờ đêm KHÔNG bị đếm hai lần: ot*Hours là phần ban ngày, đã trừ đêm', async () => {
+    // Bất biến quan trọng nhất của hàm tổng hợp. ot_night_minutes là TẬP CON của
+    // ot_weekday_minutes; nếu cả hai cùng vào công thức thì giờ đêm được trả hai
+    // lần — một lần ở 150% và một lần ở 210%.
+    const r = await rolled(async (tx) => {
+      const punch = await setupDevice(tx);
+      await roster(tx, P01, 'CA1');
+      await punch(fromLocal(P01, 4 * 60), 'IN');
+      await punch(fromLocal(P01, 16 * 60), 'OUT');
+      await computeAttendance(tx, { from: P01, to: P01, employeeCodes: [EMP] });
+      const agg = await aggregateAttendanceForPayroll(tx, { periodYear: PY, periodMonth: PM });
+      const raw = await tx
+        .select({
+          total: sql<number>`(ot_weekday_minutes + ot_weekend_minutes + ot_holiday_minutes)::int`,
+          night: dailyAttendance.otNightMinutes,
+        })
+        .from(dailyAttendance)
+        .where(eq(dailyAttendance.employeeCode, EMP));
+      return { v: agg[EMP]!, raw: raw[0]! };
+    });
+    const totalOtHours = r.raw.total / 60;
+    const nightOtHours = r.raw.night / 60;
+    // Tổng các biến OT ban ngày + OT ban đêm phải đúng bằng tổng OT thô.
+    const sumVars =
+      r.v.otNormalHours +
+      r.v.otWeekendHours +
+      r.v.otHolidayHours +
+      r.v.otNightNormalWithDayOtHours +
+      r.v.otNightNormalNoDayOtHours +
+      r.v.otNightWeekendHours +
+      r.v.otNightHolidayHours;
+    expect(sumVars).toBeCloseTo(totalOtHours, 2);
+    expect(nightOtHours).toBeGreaterThan(0);
+  });
+
+  it('làm ca đêm ngày lễ → toàn bộ vào ô 390%', async () => {
+    const r = await rolled(async (tx) => {
+      const punch = await setupDevice(tx);
+      await tx
+        .insert(publicHolidays)
+        .values({ holidayDate: P02, nameVi: 'Ngày test' })
+        .onConflictDoNothing();
+      // Lịch vẫn xếp ca đêm vào ngày lễ (xưởng chạy ngày lễ) → mọi giờ là OT 300%,
+      // và vì cả ca nằm trong khung đêm nên toàn bộ là OT đêm 390%.
+      await roster(tx, P02, 'CA3');
+      await punch(fromLocal(P02, 22 * 60), 'IN');
+      await punch(fromLocal('2031-03-05', 6 * 60), 'OUT');
+      await computeAttendance(tx, { from: P02, to: P02, employeeCodes: [EMP] });
+      return aggregateAttendanceForPayroll(tx, { periodYear: PY, periodMonth: PM });
+    });
+    const v = r[EMP]!;
+    expect(v.otNightHolidayHours).toBe(8);
+    expect(v.otHolidayHours).toBe(0); // phần ban ngày = 0, không đếm trùng
+    // Ngày lễ không có công chính — nếu có thì trả lương hai lần.
+    expect(v.workedDays).toBe(0);
+  });
+
+  it('mealDays chỉ đếm ngày có làm thật, không đếm ngày nghỉ', async () => {
+    const r = await rolled(async (tx) => {
+      const punch = await setupDevice(tx);
+      await roster(tx, P01, 'HC');
+      await roster(tx, P02, 'REST');
+      await punch(fromLocal(P01, 8 * 60), 'IN');
+      await punch(fromLocal(P01, 17 * 60), 'OUT');
+      await computeAttendance(tx, { from: P01, to: P02, employeeCodes: [EMP] });
+      return aggregateAttendanceForPayroll(tx, { periodYear: PY, periodMonth: PM });
+    });
+    const v = r[EMP]!;
+    // Phụ cấp ăn giữa ca theo ngày đi làm thật. Mặc định cũ lấy bằng số ngày công
+    // chuẩn của tháng nên người nghỉ nửa tháng vẫn lĩnh đủ tiền ăn cả tháng.
+    expect(v.mealDays).toBe(1);
+    expect(v.workedDays).toBe(1);
+  });
+
+  it('không có dữ liệu thì không có khoá — để tầng lương tự quyết định', async () => {
+    const r = await rolled(async (tx) => {
+      await setupDevice(tx);
+      return aggregateAttendanceForPayroll(tx, { periodYear: 2032, periodMonth: 1 });
+    });
+    // KHÔNG trả {workedDays: 0} cho người không có dữ liệu: 0 ngày công và
+    // "chưa chấm công" là hai chuyện khác nhau, và 0 thì vẫn tính ra được một
+    // phiếu lương hợp lệ trông như người đó không đi làm ngày nào.
+    expect(r[EMP]).toBeUndefined();
+  });
+});
