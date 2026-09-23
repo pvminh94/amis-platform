@@ -2,9 +2,10 @@ import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { isUuid } from '@/lib/uuid';
 import { getDb } from '@/db/client';
-import { employees, payslips, payRuns } from '@/db/schema';
+import { bankPaymentBatches, employees, payslips, payRuns } from '@/db/schema';
 import { Badge, Card, Alert } from '@/components/ui';
 import { PayRunSubmit } from '@/components/pay-run-submit';
+import { PaymentExport } from '@/components/payment-export';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,23 @@ export default async function PayRunDetailPage({
     .from(payslips)
     .innerJoin(employees, eq(payslips.employeeId, employees.id))
     .where(eq(payslips.payRunId, id));
+
+  // Danh sách lô thanh toán đã xuất của kỳ này, kể cả lô VOID — một lô đã huỷ
+  // mà biến mất khỏi màn hình thì không ai biết là đã từng có file gửi ngân hàng.
+  const batches = await db
+    .select({
+      id: bankPaymentBatches.id,
+      batchNo: bankPaymentBatches.batchNo,
+      bankCode: bankPaymentBatches.bankCode,
+      fileName: bankPaymentBatches.fileName,
+      rowCount: bankPaymentBatches.rowCount,
+      totalAmount: bankPaymentBatches.totalAmount,
+      status: bankPaymentBatches.status,
+      generatedAt: bankPaymentBatches.generatedAt,
+    })
+    .from(bankPaymentBatches)
+    .where(eq(bankPaymentBatches.payRunId, id))
+    .orderBy(bankPaymentBatches.generatedAt);
 
   const snap = run.policySnapshot as Record<
     string,
@@ -206,6 +224,55 @@ export default async function PayRunDetailPage({
           .
         </Alert>
       )}
+
+      <Card className="mt-4" title="Thanh toán ngân hàng">
+        <p className="mb-3 text-xs text-[var(--muted)]">
+          File sinh từ chính phiếu lương đã khoá và tham số ngân hàng{' '}
+          <strong>BANK_PAYOUT</strong> — không nhập tay số tài khoản ở đây, vì tay
+          gõ là tay sai. Tổng ở footer được đối chiếu với tổng các dòng trước khi
+          ghi, lệch một đồng là không sinh file.
+        </p>
+
+        {batches.length > 0 && (
+          <table className="mb-4 w-full text-left text-xs">
+            <thead className="text-[var(--muted)]">
+              <tr>
+                <th className="py-1 pr-3 font-normal">Số lô</th>
+                <th className="py-1 pr-3 font-normal">Ngân hàng</th>
+                <th className="py-1 pr-3 text-right font-normal">Món</th>
+                <th className="py-1 pr-3 text-right font-normal">Tổng</th>
+                <th className="py-1 pr-3 font-normal">Trạng thái</th>
+                <th className="py-1 font-normal"></th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {batches.map((b) => (
+                <tr key={b.id} className="border-t border-[var(--border)]">
+                  <td className="py-1.5 pr-3">{b.batchNo}</td>
+                  <td className="py-1.5 pr-3">{b.bankCode}</td>
+                  <td className="py-1.5 pr-3 text-right">{b.rowCount}</td>
+                  <td className="py-1.5 pr-3 text-right">{fmt(Number(b.totalAmount))}</td>
+                  <td className="py-1.5 pr-3">
+                    <Badge tone={b.status === 'VOID' ? 'neutral' : b.status === 'SENT' ? 'active' : 'warn'}>
+                      {b.status}
+                    </Badge>
+                  </td>
+                  <td className="py-1.5">
+                    <a
+                      href={`/api/payment-batches/${b.id}/download`}
+                      className="text-[var(--accent)] underline"
+                    >
+                      tải
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        <PaymentExport payRunId={run.id} />
+      </Card>
     </main>
   );
 }

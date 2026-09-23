@@ -37,6 +37,7 @@ import {
   integer,
   jsonb,
   numeric,
+  uniqueIndex,
   pgEnum,
   pgTable,
   text,
@@ -1136,5 +1137,144 @@ export const dailyAttendance = pgTable(
     // Giờ đêm không thể nhiều hơn giờ làm: đêm là TẬP CON của khoảng đã làm.
     chkNightSubset: check('chk_daily_attendance_night', sql`${t.nightMinutes} <= ${t.workedMinutes}`),
     chkStandardDays: check('chk_daily_attendance_days', sql`${t.standardDays} >= 0`),
+  }),
+);
+
+// ===========================================================================
+// THANH TOÁN QUA NGÂN HÀNG
+// ===========================================================================
+
+/**
+ * Tài khoản ngân hàng của nhân viên.
+ *
+ * Tách thành bảng riêng chứ không nhét vào `employees`, vì một người có thể có
+ * nhiều tài khoản (đổi ngân hàng, nhận lương một nơi thưởng một nơi) và vì thông
+ * tin này có VÒNG ĐỜI RIÊNG: nó cần ngày đối chiếu, cần tắt khi hết dùng, và sai
+ * một chữ số thì tiền đi mất.
+ *
+ * `is_primary` được ép duy nhất bằng PARTIAL UNIQUE INDEX: "tài khoản chính" phải
+ * là đúng MỘT, không phải "không quá một". Nếu chỉ dùng cờ boolean mà không có
+ * ràng buộc thì hai dòng cùng is_primary = true vẫn ghi được, và lúc xuất file
+ * lương engine phải chọn — chọn sai là trả lương vào tài khoản cũ của người đã
+ * đóng tài khoản đó.
+ */
+export const employeeBankAccounts = pgTable(
+  'employee_bank_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    employeeCode: varchar('employee_code', { length: 32 })
+      .notNull()
+      // RESTRICT: xoá nhân viên không được xoá lịch sử tài khoản đã nhận lương.
+      .references(() => employees.employeeCode, { onDelete: 'restrict' }),
+    accountNumber: varchar('account_number', { length: 32 }).notNull(),
+    /** Tên chủ tài khoản ĐÚNG NHƯ NGÂN HÀNG GHI — không phải tên trong hồ sơ. */
+    accountName: varchar('account_name', { length: 120 }).notNull(),
+    /** Mã NAPAS của ngân hàng thụ hưởng, vd 'VCBVNVX'. */
+    bankCode: varchar('bank_code', { length: 12 }).notNull(),
+    bankName: varchar('bank_name', { length: 120 }),
+    branch: varchar('branch', { length: 120 }),
+    isPrimary: boolean('is_primary').notNull().default(false),
+    /**
+     * Ngày đối chiếu với ngân hàng (in sao kê / xác minh thử).
+     *
+     * Không bắt buộc, nhưng tài khoản CHƯA đối chiếu mà vẫn xuất file lương thì
+     * rủi ro là có thật: chuyển nhầm số tài khoản thì đòi lại rất khó. Trường này
+     * tồn tại để giao diện cảnh báo được, chứ không phải để trang trí.
+     */
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uqPersonBankAccount: unique('uq_bank_accounts_person').on(
+      t.employeeCode,
+      t.bankCode,
+      t.accountNumber,
+    ),
+    idxEmployee: index('idx_bank_accounts_employee').on(t.employeeCode),
+    // STK chỉ gồm chữ số. Chặn ở DB vì một STK có dấu cách lọt qua thì file UNC
+    // vẫn sinh được, vẫn tải lên được, và chỉ nổ ở phía ngân hàng — lúc đó đã
+    // muộn và phải làm lại cả lô.
+    chkDigits: check(
+      'chk_bank_accounts_digits',
+      sql`${t.accountNumber} ~ '^[0-9]{6,20}$'`,
+    ),
+    chkBankCode: check('chk_bank_accounts_bank', sql`length(${t.bankCode}) >= 3`),
+    // ĐÚNG MỘT tài khoản chính cho mỗi nhân viên (partial unique index).
+    uqOnePrimary: uniqueIndex('uq_bank_accounts_one_primary')
+      .on(t.employeeCode)
+      .where(sql`${t.isPrimary} = true`),
+  }),
+);
+
+/**
+ * LÔ THANH TOÁN ĐÃ XUẤT — mỗi lần sinh file là một dòng ở đây.
+ *
+ * Vì sao phải lưu, trong khi file vẫn còn trên đĩa kế toán:
+ *
+ *   1. CHECKSUM. File UNC là chứng từ chi tiền. Nếu sau này có tranh chấp "file
+ *      gửi ngân hàng có bị sửa không" thì chỉ checksum mới trả lời được. Không
+ *      lưu thì câu trả lời là "không biết".
+ *   2. KHÔNG XUẤT TRÙNG. Hai người cùng xuất lô lương tháng 9 ra hai file, gửi
+ *      cả hai lên iBanking thì nhân viên nhận lương hai lần. `batchNo` UNIQUE
+ *      cộng với ràng buộc một kỳ lương chỉ có một lô còn hiệu lực là cái chặn.
+ *   3. TRẠNG THÁI. GENERATED / SENT / RETURNED / VOID — một lô đã gửi mà ngân
+ *      hàng trả lại một phần thì phải ghi lại được, không phải xoá đi làm lại.
+ */
+export const bankPaymentBatches = pgTable(
+  'bank_payment_batches',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    batchNo: varchar('batch_no', { length: 40 }).notNull(),
+    payRunId: uuid('pay_run_id')
+      .notNull()
+      .references(() => payRuns.id, { onDelete: 'restrict' }),
+    /** Ngân hàng nhận file: VCB / TCB / CTG / MBB / GENERIC. */
+    bankCode: varchar('bank_code', { length: 12 }).notNull(),
+    purpose: varchar('purpose', { length: 16 }).notNull().default('SALARY'),
+    fileName: varchar('file_name', { length: 200 }).notNull(),
+    format: varchar('format', { length: 8 }).notNull(),
+    rowCount: integer('row_count').notNull(),
+    /** Tổng tiền của lô — phải bằng tổng thực nhận của các phiếu trong file. */
+    totalAmount: integer('total_amount').notNull(),
+    /** SHA-256 của nội dung file, hex. */
+    checksum: varchar('checksum', { length: 64 }).notNull(),
+    byteLength: integer('byte_length').notNull(),
+    /**
+     * NỘI DUNG FILE, lưu nguyên văn.
+     *
+     * Không lưu thì muốn tải lại phải SINH LẠI — mà sinh lại chỉ ra đúng byte cũ
+     * nếu phiếu lương, tài khoản và phiên bản tham số đều chưa đổi. Với chứng từ
+     * chi tiền thì "nếu" là quá nhiều: một người sửa tài khoản tháng sau là file
+     * của tháng này tái tạo ra khác, và checksum không còn khớp với cái đã gửi
+     * ngân hàng. 100KB cho 1.000 nhân viên là cái giá quá rẻ để bỏ chữ "nếu".
+     */
+    content: text('content').notNull(),
+    /** Phiên bản tham số ngân hàng đã dùng — để tái tạo lại đúng file đó. */
+    policyVersionId: uuid('policy_version_id'),
+    status: varchar('status', { length: 16 }).notNull().default('GENERATED'),
+    generatedBy: varchar('generated_by', { length: 120 }).notNull(),
+    generatedAt: timestamp('generated_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Số món bị ngân hàng trả lại (khi status = RETURNED). */
+    returnedCount: integer('returned_count').notNull().default(0),
+    notes: text('notes'),
+  },
+  (t) => ({
+    uqBatchNo: unique('uq_bank_batches_no').on(t.batchNo),
+    idxPayRun: index('idx_bank_batches_pay_run').on(t.payRunId),
+    chkCounts: check(
+      'chk_bank_batches_counts',
+      sql`${t.rowCount} > 0 AND ${t.totalAmount} > 0 AND ${t.byteLength} > 0 AND ${t.returnedCount} >= 0`,
+    ),
+    chkStatus: check(
+      'chk_bank_batches_status',
+      sql`${t.status} IN ('GENERATED','SENT','RETURNED','VOID')`,
+    ),
+    chkPurpose: check('chk_bank_batches_purpose', sql`${t.purpose} IN ('SALARY','TRANSFER')`),
+    // Chỉ MỘT lô còn hiệu lực (chưa VOID) cho mỗi kỳ lương + ngân hàng.
+    uqOneActivePerRun: uniqueIndex('uq_bank_batches_one_active')
+      .on(t.payRunId, t.bankCode)
+      .where(sql`${t.status} <> 'VOID'`),
   }),
 );

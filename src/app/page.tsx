@@ -37,6 +37,7 @@ export default async function HomePage() {
           ['/print', 'Mẫu in', 'HTML/CSS là dữ liệu — sửa mẫu không cần deploy'],
           ['/gl', 'Sổ cái', 'Ba bút toán kép cho một kỳ lương, TK 334 phải về 0'],
           ['/attendance', 'Chấm công', 'Quẹt thẻ là bằng chứng, công ngày là dữ liệu dẫn xuất'],
+          ['/payments', 'Thanh toán ngân hàng', 'File UNC kèm SHA-256 — cái đã gửi phải đúng là cái đang lưu'],
         ].map(([href, label, hint]) => (
           <a
             key={href}

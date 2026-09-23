@@ -46,6 +46,9 @@ const PERMISSIONS = [
   ['user:manage', 'Quản trị người dùng và vai trò'],
   ['gl:read', 'Xem sổ cái'],
   ['gl:post', 'Ghi sổ cái từ bảng lương'],
+  // Tách nhiệm vụ: người XUẤT file chuyển tiền không phải người tính lương.
+  ['payment:export', 'Xuất file thanh toán ngân hàng'],
+  ['payment:read', 'Xem lô thanh toán ngân hàng'],
   ['attendance:read', 'Xem chấm công'],
   ['attendance:compute', 'Tính lại công ngày'],
 ] as const;
@@ -78,6 +81,7 @@ const ROLES = [
     perms: [
       'policy:read', 'payroll:read', 'payroll:submit', 'approval:act',
       'report:read', 'print:read', 'gl:read', 'gl:post',
+      'payment:export', 'payment:read',
     ],
   },
   {

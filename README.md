@@ -180,9 +180,19 @@ src/engine/auth.ts          ★ bcrypt salt 10, JWT (jose), băm refresh token
 src/lib/auth.ts             login, xoay vòng token, RBAC, rate limit trong DB
 src/middleware.ts           security headers (thay helmet) + CORS whitelist
 src/app/api/auth/…          login / refresh / logout, refresh trong cookie HttpOnly
-scripts/seed-auth.ts        14 quyền, 5 vai trò, 6 người dùng
+scripts/seed-auth.ts        20 quyền, 5 vai trò, 6 người dùng
 scripts/auth-flow.ts        32 kiểm tra end-to-end
 tests/auth.spec.ts          32 test: các đường tấn công JWT, bcrypt, so sánh thời gian
+
+src/policy/bank-params.ts   ★ tham số 4 ngân hàng — policy kind thứ MƯỜI MỘT
+src/engine/payment-file.ts  ★ sinh + kiểm file UNC: VCB định dạng cố định, CSV chung
+src/lib/payment.ts          xuất lô, đối chiếu SHA-256, máy trạng thái
+src/app/api/payment-batches/…  tải file (kèm kiểm băm) + đổi trạng thái
+src/app/payments/page.tsx   danh sách lô toàn hệ thống
+scripts/seed-payment.ts     4 cấu hình ngân hàng + 11 tài khoản + xuất một lô
+scripts/payment-flow.ts     17 kiểm tra QUA HTTP THẬT (route chưa từng chạy nếu không)
+tests/payment.spec.ts       33 test: định dạng file, bỏ dấu, đối chiếu tổng
+tests/payment-service.spec.ts  17 test: ràng buộc DB, máy trạng thái, PostgreSQL thật
 ```
 
 ### Đã kiểm chứng
@@ -194,7 +204,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              536/536 test (16 file)
+  ✓ vitest              586/586 test (18 file)
 ```
 
 Test đáng chú ý:
@@ -220,6 +230,13 @@ Test đáng chú ý:
 - Hai quẹt 08:00 và 11:00 → 11:00 là giờ RA, không phải "quẹt vào lần hai"
 - Ngày nghỉ không đi làm → `WEEKLY_OFF`, **không phải** `ABSENT`; đi làm thì công chính = 0, toàn bộ là OT
 - Quẹt 03:00 không thuộc ca 08:00 → bị loại khỏi cửa sổ ghép cặp
+- Xuất lô **lần hai** cho cùng (kỳ, ngân hàng) → PostgreSQL ném `23505` trên `uq_bank_batches_one_active`. Đây là ràng buộc ngăn một cú đúp chuột trả lương hai lần
+- `VOID` là trạng thái **cuối**: phục hồi một lô đã huỷ là biến một file chưa từng gửi thành "đã gửi"
+- Hai tài khoản cùng `is_primary = true` cho một người → DB chặn; hai tài khoản không chính thì được
+- Nhân viên thiếu tài khoản **không bị bỏ qua im lặng** — bị loại khỏi file và nêu trong `missing[]` kèm số tiền chưa trả
+- Bỏ dấu tiếng Việt **giữ lại `/ - .`** — bản đầu tiên xoá mọi ký hiệu nên `LUONG T09/2026 NV001` ra thành `LUONG T092026 NV001`. Ngân hàng vẫn nhận, nhưng đó là dòng người lao động dùng để nhận ra lương của mình trên sao kê
+- Tổng ở footer được đối chiếu với tổng các dòng **trước khi ghi**; lệch một đồng là không sinh file
+- `employeesWithoutAccount` chỉ nêu người **còn làm việc** — bản đầu tiên liệt cả người đã nghỉ, và một danh sách dài toàn nhiễu thì không ai đọc
 
 ### Chạy thử
 
@@ -240,7 +257,9 @@ npm run seed:attendance     # thiết bị, 11 ngày lễ 2026, hệ xoay, lịc
                             # 762 quẹt thẻ — rồi tính công và in đối chiếu
 npm run demo:gl             # ghi sổ kỳ 09/2026, in bút toán + bảng đối chiếu
 npm run demo:rbac           # 17 kiểm tra phân quyền + phân tách nhiệm vụ
-npm run seed:all            # cả tám loại chính sách
+npm run seed:payment        # 4 cấu hình ngân hàng + tài khoản NV + xuất một lô
+npm run demo:payment        # 17 kiểm tra qua HTTP thật (cần dev server ở 3100)
+npm run seed:all            # cả mười một loại chính sách
 npm run payroll             # seed 12 nhân viên + tính kỳ 09/2026
 npm run demo:approval       # chạy thử quy trình duyệt end-to-end
 npm run seed:auth           # 14 quyền, 5 vai trò, 6 người dùng
@@ -278,6 +297,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **11** | ~~Ghép cặp quẹt thẻ~~ ✅ FIRST-IN/LAST-OUT theo đoạn, suy giờ khi thiếu quẹt nhưng đánh dấu `MISSING_PUNCH`, OT tách 150/200/300% + phần đêm, grace period và mọi ngưỡng là tham số | ✅ |
 | **12** | ~~Chấm công ngày~~ ✅ 5 bảng (`shift_devices` / `raw_punches` chỉ-thêm / `employee_shifts` / `public_holidays` / `daily_attendance` dẫn xuất), hệ xoay là policy kind thứ mười, API + trang `/attendance`, seed 762 quẹt · 360 ngày công | ✅ |
 | **13** | ~~Nối chấm công vào lương~~ ✅ bỏ map fixture hardcode trong `run-payroll`, đọc `daily_attendance`; thêm phụ cấp đêm 30% + OT đêm 200/210/270/390%; trang kỳ lương hiện **công thức đã chạy** cho từng thành phần | ✅ |
+| **14** | ~~File thanh toán ngân hàng~~ ✅ `employee_bank_accounts` + `bank_payment_batches`, định dạng VCB/TCB/CTG/MBB là **tham số** (kind thứ 11), nội dung file lưu kèm SHA-256 và server từ chối trả nếu băm lệch, một kỳ một lô ép bằng unique index riêng phần, trang `/payments` | ✅ |
 
 ---
 
@@ -415,5 +435,13 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Vì sao `resolvePolicy` ném lỗi thay vì trả mặc định.** Một kỳ lương tính bằng con số không có căn cứ pháp lý nguy hiểm hơn nhiều so với việc dừng lại và báo "chưa cấu hình chính sách cho khoảng này".
 
 **Vì sao `PayRun.policySnapshot` đóng băng tham số.** Ba năm sau cơ quan thuế kiểm tra, hoặc có người vào sửa `policy_versions`, thì phiếu lương cũ vẫn phải tái hiện đúng con số đã tính. Nếu chỉ lưu tham chiếu rồi tra ngược, một lần chỉnh sửa quá khứ sẽ làm sai lệch toàn bộ lịch sử lương.
+
+**Vì sao lưu cả NỘI DUNG file thanh toán, không chỉ SHA-256.** Bản đầu tiên chỉ lưu băm và kích thước, định sinh lại file khi cần tải. Nhưng sinh lại chỉ ra đúng byte cũ nếu phiếu lương, tài khoản và phiên bản tham số đều chưa đổi — mà tháng sau có người sửa số tài khoản là file của tháng này tái tạo ra khác, và cái đã gửi ngân hàng không còn truy được. Với chứng từ chi tiền thì chữ "nếu" là quá nhiều: 100 KB cho 1.000 nhân viên là giá quá rẻ để bỏ nó đi. Route tải vẫn kiểm băm trước khi trả — nếu lệch thì trả 500 và từ chối, vì gửi nhầm một lệnh chuyển tiền đắt hơn một màn hình báo lỗi.
+
+**Vì sao "một kỳ một lô" là unique index RIÊNG PHẦN, không phải kiểm tra trong code.** `UNIQUE (pay_run_id, bank_code) WHERE status <> 'VOID'` — ràng buộc này sống ở tầng DB nên nó chặn cả những đường vào không đi qua service: một script chạy tay, một endpoint ai đó thêm sau. Kiểm tra `SELECT count(*)` rồi `INSERT` thì có cửa sổ đua: hai request song song cùng đọc được 0 và cùng ghi, và tiền đi hai lần. Cùng lý do đã áp dụng cho bút toán GL và `EXCLUDE` của khoảng hiệu lực.
+
+**Vì sao thiếu tài khoản thì loại khỏi file chứ không dừng cả lô.** Một người chưa kịp mở tài khoản không được phép khiến 400 người còn lại không nhận được lương. Nhưng cũng không được bỏ qua im lặng — người bị loại xuất hiện trong `missing[]` kèm đúng số tiền chưa trả, ngay trên màn hình lúc xuất, để kế toán đối chiếu trước khi gửi thay vì phát hiện vào kỳ sau. Tài khoản **chưa đối chiếu** thì vẫn vào file (chặn thì tê liệt) nhưng nêu trong `unverified[]`: chuyển tiền vào số chưa xác nhận là lỗi không sửa được sau khi gửi.
+
+**Vì sao `payment:export` thuộc kế toán, không thuộc nhân sự.** `HR_ADMIN` có `payroll:run` nhưng không có `payment:export`; `CHIEF_ACCOUNTANT` thì ngược lại. Nếu một tài khoản làm được cả hai thì nó tự tăng lương cho mình rồi tự chuyển, và không có ai ở giữa để phát hiện. Cùng nguyên tắc tách nhiệm vụ đã áp dụng cho `gl:post`.
 
 **Giảm trừ gia cảnh KHÔNG chia theo ngày công.** Người vào làm giữa tháng vẫn được trừ đủ 15,5 triệu. Chia nhỏ theo tỷ lệ ngày là sai luật và làm người lao động nộp thuế oan.

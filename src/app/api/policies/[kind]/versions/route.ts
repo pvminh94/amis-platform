@@ -10,6 +10,7 @@ import { reportParamsSchema, reportJsonSchema } from '@/policy/report-params';
 import { glMapParamsSchema, glMapJsonSchema } from '@/policy/gl-params';
 import { shiftParamsSchema, shiftJsonSchema } from '@/policy/shift-params';
 import { rotationParamsSchema, rotationJsonSchema } from '@/policy/rotation-params';
+import { bankPayoutParamsSchema, bankPayoutJsonSchema } from '@/policy/bank-params';
 import { ensureKind } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
@@ -105,6 +106,13 @@ const VALIDATORS: Record<
     nameVi: 'Hệ xoay ca',
     schema: rotationParamsSchema,
     json: rotationJsonSchema,
+    exclusiveByCode: true,
+  },
+  // Loại thứ MƯỜI MỘT. Vẫn một dòng: không có trang nào viết riêng cho BANK_VCB.
+  BANK_PAYOUT: {
+    nameVi: 'Tham số thanh toán ngân hàng',
+    schema: bankPayoutParamsSchema,
+    json: bankPayoutJsonSchema,
     exclusiveByCode: true,
   },
 };
