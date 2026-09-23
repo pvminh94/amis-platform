@@ -218,8 +218,38 @@ ok "Nối được bằng user '$DB_USER' qua 127.0.0.1:$DB_PORT"
 info "6/7  Tạo .env"
 
 if [ -f .env ]; then
-  warn ".env đã tồn tại — KHÔNG ghi đè. Sửa DATABASE_URL thủ công nếu cần:"
-  echo "      DATABASE_URL=postgresql://$DB_USER:$DB_PASS@127.0.0.1:$DB_PORT/$DB_NAME"
+  # BUG ĐÃ SỬA: bản cũ chỉ in ra "sửa DATABASE_URL thủ công nếu cần" rồi CHẠY TIẾP
+  # sang db:setup với cái .env sai. Người dùng nhận về 28P01 ở drizzle-kit mà
+  # không hiểu vì sao, vì script vừa mới báo "✓ Nối được" ở bước trước.
+  #
+  # Nay: THỬ cái DATABASE_URL đang có. Nối được thì giữ nguyên (không phá cấu hình
+  # của người dùng). Không nối được thì sao lưu .env và chỉ thay ĐÚNG dòng
+  # DATABASE_URL — JWT_SECRET và CORS_ORIGINS giữ nguyên, vì đổi JWT_SECRET sẽ làm
+  # mọi token đang dùng mất hiệu lực.
+  EXPECTED="postgresql://$DB_USER:$DB_PASS@127.0.0.1:$DB_PORT/$DB_NAME"
+  EXISTING="$(grep -E '^[[:space:]]*DATABASE_URL=' .env | tail -1 | cut -d= -f2- || true)"
+
+  if [ -n "$EXISTING" ] && psql "$EXISTING" -tAc 'select 1' >/dev/null 2>&1; then
+    ok ".env đã có và DATABASE_URL nối được — giữ nguyên"
+  else
+    [ -n "$EXISTING" ] \
+      && warn ".env có DATABASE_URL nhưng KHÔNG nối được: $(echo "$EXISTING" | sed -E 's#(://[^:]+:)[^@]+@#\1***@#')" \
+      || warn ".env chưa có dòng DATABASE_URL"
+    BAK=".env.bak.$(date +%s)"
+    cp .env "$BAK"
+    if grep -qE '^[[:space:]]*DATABASE_URL=' .env; then
+      sed -i "s#^[[:space:]]*DATABASE_URL=.*#DATABASE_URL=$EXPECTED#" .env
+    else
+      printf 'DATABASE_URL=%s\n' "$EXPECTED" >> .env
+    fi
+    ok "Đã sửa DATABASE_URL trong .env (bản gốc: $BAK)"
+  fi
+
+  # .env sinh ra từ lần chạy trước có thể thuộc về root — user thường phải đọc được
+  # nó thì `npm run dev` mới chạy.
+  if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    chown "$SUDO_USER":"$(id -gn "$SUDO_USER")" .env 2>/dev/null || true
+  fi
 else
   JWT="$(openssl rand -base64 48 | tr -d '\n')"
   # requireJwtSecret() đòi tối thiểu 32 ký tự; base64 của 48 byte là 64 ký tự.
