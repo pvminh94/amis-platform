@@ -29,6 +29,22 @@ export default async function HomePage() {
         </p>
       </div>
 
+      <nav className="flex flex-wrap gap-2">
+        {[
+          ['/payroll', 'Bảng lương', 'Kỳ lương đã tính và phiếu của từng người'],
+          ['/print', 'Mẫu in', 'HTML/CSS là dữ liệu — sửa mẫu không cần deploy'],
+        ].map(([href, label, hint]) => (
+          <a
+            key={href}
+            href={href}
+            className="group rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2.5 transition-colors hover:border-[var(--accent-dim)]"
+          >
+            <span className="text-sm font-medium">{label}</span>
+            <span className="block text-xs text-[var(--muted)]">{hint}</span>
+          </a>
+        ))}
+      </nav>
+
       <Alert tone="info">
         Mỗi loại chính sách có nhiều <strong>phiên bản</strong>, mỗi phiên bản áp dụng cho một khoảng thời gian.
         Engine đọc phiên bản theo <strong>ngày của kỳ lương</strong>, nên phiếu lương cũ vẫn tái hiện đúng con số đã tính.

@@ -29,6 +29,7 @@
 
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   date,
   index,
@@ -246,6 +247,146 @@ export const payRuns = pgTable(
     chkPeriod: check(
       'chk_pay_run_period',
       sql`${t.periodMonth} >= 1 AND ${t.periodMonth} <= 12 AND ${t.periodYear} >= 2000`,
+    ),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// NHÂN VIÊN — entity nghiệp vụ đầu tiên của Phase 6
+// ---------------------------------------------------------------------------
+
+/**
+ * Trước Phase 6, mọi con số lương đều đến từ dữ liệu mẫu hardcode trong
+ * scripts/seed-salary.ts. Bảng này là thứ làm cho hệ thống thành một ERP thật:
+ * nhân viên có thật, và phiếu lương tính cho MỘT NGƯỜI cụ thể.
+ *
+ * Chỉ giữ những trường mà engine cần. Hồ sơ đầy đủ (hợp đồng, bảo hiểm, ngân
+ * hàng…) thuộc về module HRM, sẽ xây sau.
+ */
+export const employees = pgTable(
+  'employees',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    employeeCode: varchar('employee_code', { length: 32 }).notNull(),
+    fullName: varchar('full_name', { length: 120 }).notNull(),
+    /** Mã số thuế cá nhân — cần cho quyết toán, không dùng để tính. */
+    taxCode: varchar('tax_code', { length: 20 }),
+    department: varchar('department', { length: 120 }).notNull(),
+
+    /**
+     * Vùng lương tối thiểu. QUYẾT ĐỊNH trần và sàn BHTN — không phải trường
+     * mô tả, mà là đầu vào tính toán. Sai một chữ là sai cả khoản BHTN.
+     */
+    // length 4 chứ không phải 2: tên vùng là SỐ LA MÃ — 'I', 'II', 'III', 'IV'.
+    // 'III' dài 3 ký tự. Khai báo varchar(2) compile sạch, seed sạch với vùng I
+    // và II, rồi mới nổ ở nhân viên đầu tiên thuộc vùng III.
+    wageRegion: varchar('wage_region', { length: 4 }).notNull(),
+
+    /** Đã qua đào tạo nghề → cộng 7% vào SÀN BHTN. */
+    trainedWorker: boolean('trained_worker').notNull().default(false),
+
+    /** Số người phụ thuộc đã đăng ký hợp lệ — giảm trừ 6,2 triệu/người. */
+    dependents: integer('dependents').notNull().default(0),
+
+    /** Lương cơ bản tháng (VND) — đầu vào cho công thức lương. */
+    baseSalary: integer('base_salary').notNull(),
+    /** Lương giờ (VND) — đầu vào cho lương làm thêm. */
+    hourlyRate: integer('hourly_rate').notNull().default(0),
+
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uqCode: unique('uq_employees_code').on(t.employeeCode),
+    idxDept: index('idx_employees_department').on(t.department),
+    chkRegion: check(
+      'chk_employees_region',
+      sql`${t.wageRegion} IN ('I', 'II', 'III', 'IV')`,
+    ),
+    // Chặn ở tầng DB: lương âm hay số phụ thuộc âm là dữ liệu hỏng, và nếu lọt
+    // qua thì engine sẽ tính ra một phiếu lương sai mà không lỗi nào hiện ra.
+    chkNumbers: check(
+      'chk_employees_numbers',
+      sql`${t.baseSalary} >= 0 AND ${t.hourlyRate} >= 0 AND ${t.dependents} >= 0 AND ${t.dependents} <= 20`,
+    ),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// PHIẾU LƯƠNG — kết quả của MỘT kỳ lương cho MỘT nhân viên
+// ---------------------------------------------------------------------------
+
+/**
+ * MỖI PHIẾU LƯU LẠI TOÀN BỘ ĐẦU VÀO VÀ NGUỒN GỐC CHÍNH SÁCH.
+ *
+ * Đây không phải tối ưu, mà là yêu cầu pháp lý: ba năm sau, khi cơ quan thuế
+ * hỏi "tại sao kỳ 09/2026 trừ đúng số này", phải tái hiện được chính xác bộ
+ * tham số đã dùng. Chính sách trong DB có thể đã đổi nhiều lần kể từ đó.
+ *
+ * `employeeCode` và `fullName` được COPY vào chứ không join: nhân viên đổi
+ * tên hay chuyển mã sau này thì phiếu lương cũ vẫn phải hiển thị đúng như
+ * lúc nó được lập.
+ */
+export const payslips = pgTable(
+  'payslips',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    payRunId: uuid('pay_run_id')
+      .notNull()
+      .references(() => payRuns.id, { onDelete: 'cascade' }),
+
+    /**
+     * onDelete: 'restrict' — KHÔNG CHO PHÉP xoá nhân viên đã có phiếu lương.
+     * Xoá được là phá huỷ lịch sử trả lương, và đó là thứ không thể khôi phục.
+     * Nhân viên nghỉ việc thì đặt active = false, không xoá.
+     */
+    employeeId: uuid('employee_id')
+      .notNull()
+      .references(() => employees.id, { onDelete: 'restrict' }),
+
+    employeeCode: varchar('employee_code', { length: 32 }).notNull(),
+    fullName: varchar('full_name', { length: 120 }).notNull(),
+
+    /** Đầu vào công thức lương — để tính lại được y hệt. */
+    variables: jsonb('variables').notNull(),
+
+    /**
+     * Bộ tham số đã áp dụng, theo từng loại chính sách:
+     *   { VN_SALARY: { code, version }, VN_BHXH: {...}, VN_PIT: {...} }
+     */
+    policySnapshot: jsonb('policy_snapshot').notNull(),
+
+    /** Kết quả từng thành phần lương. */
+    components: jsonb('components').notNull(),
+
+    earningsTotal: integer('earnings_total').notNull(),
+    deductionsTotal: integer('deductions_total').notNull(),
+    taxableIncome: integer('taxable_income').notNull(),
+    insuranceBase: integer('insurance_base').notNull(),
+
+    siBase: integer('si_base').notNull(),
+    uiBase: integer('ui_base').notNull(),
+    siEmployee: integer('si_employee').notNull(),
+    siEmployer: integer('si_employer').notNull(),
+
+    pit: integer('pit').notNull(),
+    netPay: integer('net_pay').notNull(),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    // Một nhân viên chỉ có MỘT phiếu trong một kỳ. Nếu không, chạy lại kỳ
+    // lương sẽ sinh bản trùng và tổng quỹ lương bị đội lên.
+    uqRunEmployee: unique('uq_payslips_run_employee').on(t.payRunId, t.employeeId),
+    idxRun: index('idx_payslips_run').on(t.payRunId),
+    idxEmployee: index('idx_payslips_employee').on(t.employeeId),
+    // Số tiền không được âm; khấu trừ thì luôn <= 0.
+    chkAmounts: check(
+      'chk_payslips_amounts',
+      sql`${t.earningsTotal} >= 0 AND ${t.deductionsTotal} <= 0 AND ${t.pit} >= 0
+          AND ${t.siEmployee} >= 0 AND ${t.siEmployer} >= 0`,
     ),
   }),
 );

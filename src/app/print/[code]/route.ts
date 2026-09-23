@@ -11,7 +11,12 @@
  * mở link này là kế toán, không phải lập trình viên.
  */
 
-import { buildPayslipPrintData, SAMPLE_PAYSLIP, type PayslipInput } from '@/lib/payslip';
+import {
+  buildPayslipPrintData,
+  loadPayslipPrintData,
+  SAMPLE_PAYSLIP,
+  type PayslipInput,
+} from '@/lib/payslip';
 import { renderTemplate, renderDocument, escapeHtml } from '@/engine/print';
 import type { WageRegion } from '@/engine/si';
 
@@ -65,8 +70,12 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
   const url = new URL(req.url);
 
   try {
-    const input = readInput(url);
-    const { template, data, numericInputs, applied } = await buildPayslipPrintData(input, code);
+    // Có ?payslip=<id> thì in PHIẾU THẬT từ số liệu đã lưu trong database,
+    // engine không chạy lại. Không có thì render bản demo từ tham số truy vấn.
+    const payslipId = url.searchParams.get('payslip');
+    const { template, templateVersion, data, numericInputs, applied } = payslipId
+      ? await loadPayslipPrintData(payslipId, code)
+      : await buildPayslipPrintData(readInput(url), code);
 
     const content = renderTemplate(template.body, data, {
       fields: template.fields,
@@ -80,7 +89,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
       `     công thức lương : ${applied.salary}\n` +
       `     bảo hiểm        : ${applied.si}\n` +
       `     thuế TNCN       : ${applied.pit}\n` +
-      `     mẫu in          : ${template.regimeCode} v? -->\n`;
+      `     mẫu in          : ${template.regimeCode} v${templateVersion} -->\n`;
 
     const html =
       renderDocument({

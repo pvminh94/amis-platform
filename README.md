@@ -153,6 +153,13 @@ src/app/print/page.tsx      danh sách mẫu in
 src/app/print/[code]/route.ts  trả về MỘT tài liệu HTML in được
 scripts/seed-print.ts       seed mẫu phiếu lương
 tests/print.spec.ts         59 test: XSS, template, số thành chữ, định dạng
+
+src/db/schema.ts            ★ employees + payslips (Phase 6)
+src/lib/payroll.ts          tính cả kỳ trong MỘT transaction
+src/app/payroll/…           bảng lương + chi tiết kỳ
+scripts/run-payroll.ts      seed 12 nhân viên + tính kỳ 09/2026
+tests/payroll.spec.ts       15 test: ngày công chuẩn, chặn đầu vào sai
+vitest.config.ts            alias @/ — thiếu file này thì test không import được
 ```
 
 ### Đã kiểm chứng
@@ -164,7 +171,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              214/214 test
+  ✓ vitest              229/229 test
 ```
 
 Test đáng chú ý:
@@ -189,6 +196,7 @@ npm run seed:salary         # seed công thức lương + demo cả ba engine
 npm run seed:approval       # seed ngưỡng duyệt
 npm run seed:print          # seed mẫu in
 npm run seed:all            # cả năm loại chính sách
+npm run payroll             # seed 12 nhân viên + tính kỳ 09/2026
 npm run dev                 # giao diện tại http://localhost:3100
 ```
 
@@ -214,7 +222,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **3** | Mở rộng loại chính sách: ~~BHXH~~ ✅ · ~~công thức lương~~ ✅ · ~~ngưỡng duyệt~~ ✅ | ✅ xong, đã kiểm chứng |
 | **4** | Workflow designer (React Flow) + rule engine biểu thức | ⬜ |
 | **5** | ~~Print format~~ ✅ (mẫu in là dữ liệu, render HTML, trình duyệt xuất PDF) · report builder ⬜ | 🔄 phần in xong |
-| **6** | Chuyển nghiệp vụ HRM sang platform (Employee, PayRun thành entity có chính sách) | ⬜ |
+| **6** | Employee + PayRun thật: bảng `employees`, `payslips`, tính cả kỳ trong một transaction, in phiếu từ số liệu đã lưu | ✅ |
 
 ---
 
@@ -227,6 +235,18 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Hai quy tắc `@page` là một cái bẫy.** `renderDocument` sinh `@page` theo `paperSize`/`orientation`/`marginMm`; nếu CSS của mẫu cũng khai báo `@page` thì hai quy tắc cascade với nhau và có thể làm mất lề đã cấu hình. Bản in vẫn đẹp trên màn hình, chỉ sai khi in thật — loại lỗi không ai phát hiện cho tới khi kế toán phàn nàn. CSS mẫu seed đã bỏ `@page`, có comment giải thích.
 
 **Không dùng `.default()` trong schema tham số — lần thứ hai.** `.default('')` trên một trường làm kiểu input khác kiểu output, mà `z.ZodType<T>` khai báo `T` cho cả hai, nên mọi chỗ gọi `resolvePolicy` vỡ kiểu. Đã xảy ra với `exemptMealCapMonthly` ở VN_PIT, giờ lặp lại với `expr` ở mẫu in. Thành nguyên tắc: tham số cấu hình không có giá trị ngầm định.
+
+**In phiếu lương KHÔNG được tính lại.** Khi in một phiếu đã lập, engine không chạy nữa: chính sách trong database có thể đã đổi kể từ khi kỳ đó được tính, và tính lại sẽ cho ra con số khác với con số đã trả cho người lao động. `loadPayslipPrintData` đọc thẳng `payslips.components` và các cột đã lưu; engine chỉ còn dùng cho trường có `expr`, tức là phép cộng trên những con số đã chốt.
+
+**Resolve chính sách MỘT LẦN cho cả kỳ, ở đầu transaction.** Nếu resolve trong vòng lặp từng nhân viên, một bản chính sách được kích hoạt giữa chừng sẽ làm hai người trong cùng một kỳ bị áp hai bộ luật — và không lỗi nào hiện ra. Resolve trước rồi dùng chung là đúng ngữ nghĩa "một kỳ một luật".
+
+**Không `Promise.all` trên cùng một client transaction.** Ba lần `resolvePolicy` cùng chạy trong một transaction của Drizzle dùng chung MỘT pg client; bắn ba query đồng thời khiến pg cảnh báo "Calling client.query() when the client is already executing" và có thể làm rối thứ tự thực thi. Tuần tự.
+
+**`varchar(2)` cho vùng lương là một cái bẫy.** Tên vùng là số La Mã — 'I', 'II', 'III', 'IV' — nên 'III' cần 3 ký tự. Code compile sạch, seed sạch với vùng I và II, rồi mới nổ ở nhân viên đầu tiên thuộc vùng III, với một thông báo `22001 value too long` không hề nhắc tên cột.
+
+**`payslips.employee_id` dùng `onDelete: 'restrict'`.** Xoá được một nhân viên đã có phiếu lương là phá huỷ lịch sử trả lương, và thứ đó không khôi phục được. Nhân viên nghỉ việc thì `active = false`, không xoá.
+
+**Chia cứng 26 ngày công là sai.** Số ngày công chuẩn dao động 24–27 tuỳ tháng và tuỳ năm nhuận; test `payroll.spec.ts` chứng minh trong 12 tháng của 2026 có nhiều hơn một giá trị. Tháng 2 chia cứng 26 sẽ làm lương thấp hơn thực tế.
 
 **Chuỗi duyệt lấy từ đường duyệt của luật, không từ thứ bậc toàn cục.** Bản đầu tiên của `resolveApprovalChain` dựng chuỗi bằng "mọi cấp có `order` ≤ cấp khớp". Sai: `HR_HEAD` có thứ bậc 3, nằm giữa `DEPT_HEAD` (2) và `CHIEF_ACCOUNTANT` (4), nên sẽ bị kéo vào duyệt một đề nghị thanh toán 300 triệu — dù nhân sự không liên quan gì tới chi tiền. Mỗi luật phải định nghĩa đường duyệt RIÊNG; `order` chỉ để sắp xếp hiển thị. Có test khoá đúng trường hợp này.
 

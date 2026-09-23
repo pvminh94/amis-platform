@@ -1,0 +1,1 @@
+ALTER TABLE "employees" ALTER COLUMN "wage_region" SET DATA TYPE varchar(4);
