@@ -20,7 +20,7 @@
     "seed:bhxh": "tsx scripts/seed-bhxh.ts",
     "seed:salary": "tsx scripts/seed-salary.ts",
     "seed:approval": "tsx scripts/seed-approval.ts",
-    "seed:all": "npm run seed:salary && npm run seed:approval && npm run seed:print && npm run seed:report && npm run seed:gl && npm run seed:auth",
+    "seed:all": "npm run seed:salary && npm run seed:approval && npm run seed:print && npm run seed:report && npm run seed:gl && npm run seed:shift && npm run seed:auth",
     "seed:print": "tsx scripts/seed-print.ts",
     "payroll": "tsx scripts/run-payroll.ts",
     "seed:report": "tsx scripts/seed-report.ts",
@@ -29,7 +29,8 @@
     "demo:auth": "tsx scripts/auth-flow.ts",
     "seed:gl": "tsx scripts/seed-gl.ts",
     "demo:gl": "tsx scripts/gl-posting.ts",
-    "demo:rbac": "tsx scripts/rbac-flow.ts"
+    "demo:rbac": "tsx scripts/rbac-flow.ts",
+    "seed:shift": "tsx scripts/seed-shift.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",

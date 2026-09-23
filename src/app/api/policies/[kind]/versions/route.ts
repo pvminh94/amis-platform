@@ -8,6 +8,7 @@ import { approvalParamsSchema, approvalJsonSchema } from '@/policy/approval-para
 import { printParamsSchema, printJsonSchema } from '@/policy/print-params';
 import { reportParamsSchema, reportJsonSchema } from '@/policy/report-params';
 import { glMapParamsSchema, glMapJsonSchema } from '@/policy/gl-params';
+import { shiftParamsSchema, shiftJsonSchema } from '@/policy/shift-params';
 import { ensureKind } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
@@ -24,17 +25,31 @@ export const dynamic = 'force-dynamic';
  */
 const VALIDATORS: Record<
   string,
-  { nameVi: string; schema: unknown; json: Record<string, unknown> }
+  {
+    nameVi: string;
+    schema: unknown;
+    json: Record<string, unknown>;
+    /**
+     * Nhiều thực thể cùng loại được ACTIVE đồng thời hay không.
+     *
+     * Khai ở đây để route tạo kind đúng ngay lần đầu — route là nơi ĐẦU TIÊN một
+     * loại có thể được tạo ra (người dùng bấm "tạo phiên bản" trước khi chạy
+     * seed), nên nếu nó không biết cờ này thì kind sinh ra sẽ sai.
+     */
+    exclusiveByCode: boolean;
+  }
 > = {
   VN_PIT: {
     nameVi: 'Thuế thu nhập cá nhân Việt Nam',
     schema: vnPitParamsSchema,
     json: vnPitJsonSchema,
+     exclusiveByCode: false,
   },
   TEST_PIT: {
     nameVi: 'Thuế TNCN (bản dùng cho test)',
     schema: vnPitParamsSchema,
     json: vnPitJsonSchema,
+     exclusiveByCode: false,
   },
   // ↓↓↓ MỘT DÒNG NÀY là tất cả những gì tầng API cần cho một loại chính sách
   //     mới. Giao diện /policies/VN_BHXH/new tự sinh form từ vnSiJsonSchema.
@@ -42,21 +57,25 @@ const VALIDATORS: Record<
     nameVi: 'Bảo hiểm xã hội Việt Nam',
     schema: vnSiParamsSchema,
     json: vnSiJsonSchema,
+    exclusiveByCode: false,
   },
   VN_SALARY: {
     nameVi: 'Công thức lương',
     schema: vnSalaryParamsSchema,
     json: vnSalaryJsonSchema,
+    exclusiveByCode: false,
   },
   APPROVAL: {
     nameVi: 'Ngưỡng duyệt',
     schema: approvalParamsSchema,
     json: approvalJsonSchema,
+    exclusiveByCode: false,
   },
   PRINT: {
     nameVi: 'Mẫu in',
     schema: printParamsSchema,
     json: printJsonSchema,
+    exclusiveByCode: true,
   },
   // ↓↓↓ Vẫn chỉ MỘT DÒNG cho loại thứ sáu. Không có trang /reports nào được
   //     viết riêng cho LUONG_THEO_BO_PHAN — form sinh từ reportJsonSchema.
@@ -64,11 +83,19 @@ const VALIDATORS: Record<
     nameVi: 'Định nghĩa báo cáo',
     schema: reportParamsSchema,
     json: reportJsonSchema,
+    exclusiveByCode: true,
   },
   GL_MAP: {
     nameVi: 'Định khoản lương vào sổ cái',
     schema: glMapParamsSchema,
     json: glMapJsonSchema,
+     exclusiveByCode: false,
+  },
+  SHIFT: {
+    nameVi: 'Định nghĩa ca làm việc',
+    schema: shiftParamsSchema,
+    json: shiftJsonSchema,
+     exclusiveByCode: true,
   },
 };
 

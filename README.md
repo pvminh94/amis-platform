@@ -194,7 +194,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              395/395 test
+  ✓ vitest              444/444 test
 ```
 
 Test đáng chú ý:
@@ -212,6 +212,10 @@ Test đáng chú ý:
 - `AccessError` phân tách **401 và 403** — gộp lại thì client không biết nên đăng nhập lại hay đừng thử nữa
 - `authErrorResponse` **ném lại** lỗi lạ thay vì nuốt thành 401 — DB chết phải hiện ra là 500
 - `safeRedirectTarget` chặn `//evil.com`, `/\\evil.com`, `javascript:` — những cái **qua được** kiểm tra `startsWith('/')`
+- Ca đêm 22:00→06:00 có `endDate` là **ngày hôm sau**, kể cả khi vắt qua tháng, qua năm, qua 29/02 năm nhuận
+- **Bất biến 3 ca 4 kíp**: quét 40 ngày liên tiếp, mỗi ngày đúng một kíp/ca và một kíp nghỉ — không ca trùng, không hở
+- Ca 12 tiếng 20:00→08:00 chỉ tính **480** phút đêm, không phải 960 — bắt lỗi đếm trùng khoảng đêm
+- Hai đoạn **chạm** nhau (12:00 ra, 12:00 vào) thì hợp lệ; **đè** nhau thì bị từ chối
 
 ### Chạy thử
 
@@ -227,9 +231,10 @@ npm run seed:approval       # seed ngưỡng duyệt
 npm run seed:print          # seed mẫu in
 npm run seed:report         # seed 2 báo cáo (cần chạy payroll trước)
 npm run seed:gl             # danh mục tài khoản + định khoản lương
+npm run seed:shift          # 5 định nghĩa ca: hành chính, ca gãy, CA1/CA2/CA3
 npm run demo:gl             # ghi sổ kỳ 09/2026, in bút toán + bảng đối chiếu
 npm run demo:rbac           # 17 kiểm tra phân quyền + phân tách nhiệm vụ
-npm run seed:all            # cả bảy loại chính sách
+npm run seed:all            # cả tám loại chính sách
 npm run payroll             # seed 12 nhân viên + tính kỳ 09/2026
 npm run demo:approval       # chạy thử quy trình duyệt end-to-end
 npm run seed:auth           # 14 quyền, 5 vai trò, 6 người dùng
@@ -263,6 +268,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **7** | JWT + refresh HttpOnly có xoay vòng, bcrypt salt 10, RBAC 2 tầng (quyền + phạm vi dữ liệu), rate limit trong DB, security headers | ✅ |
 | **8** | ~~Cầu nối HR → sổ cái~~ ✅ ba bút toán kép cho một kỳ lương, định khoản là tham số, cân đối ép ở **hai** tầng, chống ghi trùng bằng khoá duy nhất | ✅ |
 | **9** | ~~Nối RBAC vào route~~ ✅ `requirePermission`, quyền tra từ DB không từ token, phân tách nhiệm vụ HR ≠ kế toán, `/login` + đổi mật khẩu bắt buộc, chặn open redirect | ✅ |
+| **10** | ~~Engine ca kíp~~ ✅ ca hành chính / ca gãy / **ca đêm vắt 0h** / xoay 3 ca 4 kíp, khung giờ đêm là tham số, định nghĩa ca là policy kind thứ tám | ✅ |
 
 ---
 
@@ -293,6 +299,12 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Token trong localStorage là đánh đổi có ý thức.** Nếu có XSS thì access token lộ. Điều làm cho nó chấp nhận được: token chỉ sống 15 phút, còn refresh token **đã** nằm trong cookie HttpOnly với `Path=/api/auth`. Thứ bị lộ là một vé 15 phút, không phải phiên 14 ngày.
 
 **Demo không được phép phá thứ nó vừa chứng minh là không phá được.** `approval-flow.ts` dọn dẹp bằng `DELETE FROM approval_requests`, và vì `approval_audit` có FK `ON DELETE CASCADE` nên lệnh đó kéo theo việc xoá bản ghi audit — đúng thứ trigger bất biến cấm. Hệ quả: demo chạy được MỘT lần, lần thứ hai nổ ngay ở dòng dọn dẹp. Lỗi không nằm ở trigger mà ở demo; sửa bằng cách dùng `docRef` mới mỗi lần chạy thay vì xoá lịch sử.
+
+**Vì sao mọi thời điểm quy về "phút tuyệt đối".** Ca đêm là nguồn bug vô tận của chấm công nếu làm việc trực tiếp với `Date`: giờ ra nhỏ hơn giờ vào, ngày của giờ ra khác ngày công vụ, và khung phụ cấp đêm nằm vắt qua đúng cái ranh giới đó. Biểu diễn mọi thứ bằng `phút tuyệt đối so với 00:00 ngày công vụ` thì 06:00 hôm sau là `1800`, lớn hơn `1320` của 22:00 — so sánh và ghép cặp trở thành số học thường, không còn chỗ nào để nhầm ngày.
+
+**Việc kiểm tra định nghĩa ca được giao cho chính engine.** `shiftParamsSchema.superRefine` gọi thẳng `resolveShift`: chồng lấn đoạn, giờ nghỉ vượt thời lượng, giờ ra không sau giờ vào, khung đêm vô lý — tất cả chỉ có MỘT bộ luật. Viết lại bộ thứ hai ở tầng validate thì sớm muộn chúng lệch nhau, và bản lệch nhau sẽ cho lưu một ca mà engine không resolve được — tức là lỗi nổ lúc đang xếp lịch chứ không phải lúc người dùng bấm lưu.
+
+**Một lệnh "ensure" mà làm mất dữ liệu thì không còn là ensure.** Bug có sẵn, tìm ra khi `CA_TOI` được đánh số v2 thay vì v1. Hai chỗ cùng sai: (1) nhánh INSERT của `ensureKind` bỏ sót `exclusiveByCode` nên lần tạo đầu tiên luôn nhận `false` từ default của cột; (2) route tạo phiên bản gọi `ensureKind` chỉ với `{code, nameVi, paramsSchema}`, và nhánh UPDATE làm `?? false` — nên **mỗi lần tạo một phiên bản mới, cờ độc quyền của loại đó bị âm thầm đặt về false**. PRINT và REPORT_DEF thoát nạn chỉ vì seed của chúng được chạy lại sau lần POST cuối. Sửa cả hai lớp: `ensureKind` giữ nguyên giá trị hiện có khi người gọi không chỉ định, và `VALIDATORS` khai rõ cờ để route tạo kind đúng ngay lần đầu. Cờ này quyết định cả phạm vi độc quyền lẫn cách đánh số phiên bản, nên sai nó thì `resolvePolicy` không trả lời được "bản nào đang hiệu lực".
 
 **Vì sao không dùng Puppeteer/Chromium để xuất PDF.** Chromium ~170MB tải về và ~300MB RAM khi chạy, trong sandbox 2GB đang chạy chung PostgreSQL và dev server. Đổi lại ta được một file PDF — trong khi trình duyệt đã có sẵn "In → Lưu thành PDF" với chất lượng dàn trang tốt hơn hầu hết thư viện. ERPNext cũng làm đúng vậy: Print Format render HTML, trình duyệt lo phần PDF. Cái khó và đáng giá nằm ở TẦNG TEMPLATE, và đó là thứ `engine/print.ts` làm.
 

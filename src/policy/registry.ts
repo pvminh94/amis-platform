@@ -67,7 +67,7 @@ export interface KindDefinition {
 
 export async function ensureKind(def: KindDefinition, db: Db = getDb()): Promise<void> {
   const existing = await db
-    .select({ code: policyKinds.code })
+    .select({ code: policyKinds.code, exclusiveByCode: policyKinds.exclusiveByCode })
     .from(policyKinds)
     .where(eq(policyKinds.code, def.code))
     .limit(1);
@@ -81,7 +81,15 @@ export async function ensureKind(def: KindDefinition, db: Db = getDb()): Promise
         description: def.description ?? null,
         paramsSchema: def.paramsSchema,
         roundingMode: def.roundingMode ?? 'HALF_UP_VND',
-        exclusiveByCode: def.exclusiveByCode ?? false,
+        // GIỮ NGUYÊN cờ hiện có khi người gọi không nói gì.
+        //
+        // BUG ĐÃ SỬA: trước đây dòng này là `?? false`, và route tạo phiên bản
+        // gọi ensureKind chỉ với {code, nameVi, paramsSchema} — nên MỖI LẦN tạo
+        // một phiên bản mới, cờ độc quyền của loại đó bị âm thầm đặt về false.
+        // Hậu quả với SHIFT: CA_TOI được đánh số v2 thay vì v1, và về lâu dài hai
+        // bản ACTIVE của cùng một mã ca cùng tồn tại mà resolvePolicy không phân
+        // xử được. Một lệnh "ensure" mà làm mất dữ liệu thì không còn là ensure.
+        exclusiveByCode: def.exclusiveByCode ?? existing[0]!.exclusiveByCode,
         updatedAt: new Date(),
       })
       .where(eq(policyKinds.code, def.code));
@@ -95,6 +103,16 @@ export async function ensureKind(def: KindDefinition, db: Db = getDb()): Promise
     description: def.description ?? null,
     paramsSchema: def.paramsSchema,
     roundingMode: def.roundingMode ?? 'HALF_UP_VND',
+    // BUG ĐÃ SỬA: dòng này trước đây không có, nên lần tạo ĐẦU TIÊN của một
+    // loại chính sách luôn nhận exclusiveByCode = false từ default của cột — dù
+    // người gọi truyền true. Chỉ lần chạy thứ hai (đi qua nhánh UPDATE ở trên)
+    // mới set đúng. PRINT và REPORT_DEF thoát nạn chỉ vì seed của chúng được chạy
+    // lại nhiều lần.
+    //
+    // Cờ này không phải chi tiết trang trí: nó quyết định CẢ phạm vi độc quyền
+    // LẪN cách đánh số phiên bản. Sai nó thì nhiều bản ACTIVE của cùng một mã
+    // cùng tồn tại và resolvePolicy không trả lời được "bản nào đang hiệu lực".
+    exclusiveByCode: def.exclusiveByCode ?? false,
   });
 }
 
