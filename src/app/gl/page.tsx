@@ -1,4 +1,5 @@
 import { Alert, Badge, Card } from '@/components/ui';
+import { requirePageSession } from '@/lib/page-auth';
 import { getDb } from '@/db/client';
 import { payRuns } from '@/db/schema';
 import { entriesForPeriod, trialBalance } from '@/lib/gl';
@@ -11,6 +12,8 @@ export const dynamic = 'force-dynamic';
 const fmt = (n: number) => Math.abs(n).toLocaleString('vi-VN');
 
 export default async function GlPage() {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const db = getDb();
 
   const runs = await db.select().from(payRuns).orderBy(desc(payRuns.createdAt)).limit(1);

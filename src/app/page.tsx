@@ -1,4 +1,5 @@
 import { desc, eq } from 'drizzle-orm';
+import { requirePageSession } from '@/lib/page-auth';
 import { getDb } from '@/db/client';
 import { policyKinds, policyVersions } from '@/db/schema';
 import { Badge, Card, Alert } from '@/components/ui';
@@ -6,6 +7,8 @@ import { Badge, Card, Alert } from '@/components/ui';
 export const dynamic = 'force-dynamic';
 
 export default async function HomePage() {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const db = getDb();
   const kinds = await db.select().from(policyKinds);
 

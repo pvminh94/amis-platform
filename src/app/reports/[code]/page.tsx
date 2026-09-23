@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { requirePageSession } from '@/lib/page-auth';
 import { notFound } from 'next/navigation';
 import { getDb, getPool } from '@/db/client';
 import { policyVersions } from '@/db/schema';
@@ -15,6 +16,8 @@ export default async function ReportDetailPage({
 }: {
   params: Promise<{ code: string }>;
 }) {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const { code } = await params;
   const db = getDb();
 

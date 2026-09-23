@@ -1,4 +1,5 @@
 import { desc } from 'drizzle-orm';
+import { requirePageSession } from '@/lib/page-auth';
 import { getDb } from '@/db/client';
 import { payRuns } from '@/db/schema';
 import { Badge, Card, Alert } from '@/components/ui';
@@ -8,6 +9,8 @@ export const dynamic = 'force-dynamic';
 const fmt = (n: number) => n.toLocaleString('vi-VN');
 
 export default async function PayrollIndexPage() {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const db = getDb();
   const runs = await db.select().from(payRuns).orderBy(desc(payRuns.periodYear), desc(payRuns.periodMonth));
 

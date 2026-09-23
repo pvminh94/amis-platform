@@ -53,8 +53,30 @@ const SECURITY_HEADERS: Record<string, string> = {
   ].join('; '),
 };
 
+/** Trang KHÔNG đòi đăng nhập. Mọi thứ khác đều đòi. */
+const PUBLIC_PAGES = new Set(['/login']);
+
 export function middleware(req: NextRequest) {
-  const res = NextResponse.next();
+  const { pathname } = req.nextUrl;
+
+  // --- Cổng vào các trang --------------------------------------------------
+  //
+  // Đây là cổng RẺ TIỀN, không phải kiểm tra có thẩm quyền: nó chỉ biết "có
+  // cookie hay không", còn cookie hết hạn hay chữ ký sai thì `requirePageSession`
+  // trong từng trang mới xác minh được (middleware chạy ở Edge, không có DB và
+  // không nên verify JWT ở đó). Thiếu cổng này thì một request không có cookie
+  // vẫn render cả trang rồi mới redirect — tốn một vòng đọc DB vô ích.
+  const isPage = !pathname.startsWith('/api/') && !pathname.startsWith('/_next');
+  if (isPage && !PUBLIC_PAGES.has(pathname) && !req.cookies.get('access_token')) {
+    const url = req.nextUrl.clone();
+    url.pathname = '/login';
+    url.search = `?next=${encodeURIComponent(pathname)}`;
+    return NextResponse.redirect(url);
+  }
+
+  // Đường dẫn thật, để trang biết "đang ở đâu" mà quay lại sau khi đăng nhập.
+  const res = NextResponse.next({ request: { headers: new Headers(req.headers) } });
+  res.headers.set('x-pathname', pathname);
   const origin = req.headers.get('origin');
   const allowed = allowedOrigins();
 

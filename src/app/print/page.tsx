@@ -1,4 +1,5 @@
 import { desc, eq } from 'drizzle-orm';
+import { requirePageSession } from '@/lib/page-auth';
 import { getDb } from '@/db/client';
 import { policyVersions } from '@/db/schema';
 import { printParamsSchema } from '@/policy/print-params';
@@ -13,6 +14,8 @@ export const dynamic = 'force-dynamic';
  * client, nên không cần loading state.
  */
 export default async function PrintIndexPage() {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const db = getDb();
   const rows = await db
     .select()

@@ -1,4 +1,5 @@
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
+import { requirePageSession } from '@/lib/page-auth';
 
 import { dailyAttendance, employees, rawPunches } from '@/db/schema';
 import { getDb } from '@/db/client';
@@ -65,6 +66,8 @@ export default async function AttendancePage({
 }: {
   searchParams: Promise<{ month?: string }>;
 }) {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const sp = await searchParams;
   const ym = /^\d{4}-\d{2}$/.test(sp.month ?? '') ? sp.month! : currentMonth();
   const { from, to } = monthBounds(ym);

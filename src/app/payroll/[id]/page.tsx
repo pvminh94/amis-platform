@@ -4,6 +4,7 @@
 // key nào và nó cảnh báo. Không chỉ ồn: thiếu key thì khi danh sách đổi thứ tự
 // React có thể giữ lại DOM của dòng khác.
 import { Fragment } from 'react';
+import { requirePageSession } from '@/lib/page-auth';
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { isUuid } from '@/lib/uuid';
@@ -22,6 +23,8 @@ export default async function PayRunDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const db = getDb();

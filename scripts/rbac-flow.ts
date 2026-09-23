@@ -161,9 +161,28 @@ check(
   p1.authority.permissions.size > 0 && p1.claims.roles.length > 0,
   `${p1.claims.roles.join(',')} → ${p1.authority.permissions.size} quyền`,
 );
+// ĐÃ SỬA: bản cũ khẳng định "EMPLOYEE chỉ có print:read" và kiểm bằng
+// `permissions.size === 1`. Phase 14 đã thêm `attendance:read` cho EMPLOYEE (nhân
+// viên xem được chấm công CỦA MÌNH, phạm vi SELF chặn phần còn lại) nhưng không
+// cập nhật kiểm tra này — viết từ Phase 9. Nên nó đỏ âm thầm từ Phase 14 tới giờ,
+// và không ai biết vì `npm run verify` không chạy demo script.
+//
+// Sửa thành so ĐÚNG TẬP QUYỀN chứ không so số lượng: `size === 1` sẽ vẫn pass nếu
+// ai đó xoá print:read và thêm một quyền hoàn toàn khác — tức là kiểm tra sai mà
+// vẫn xanh.
+const empPerms = [...(await authenticate(req(await tokenFor('nv.kythuat')), db)).authority.permissions].sort();
 check(
-  'EMPLOYEE chỉ có print:read',
-  (await authenticate(req(await tokenFor('nv.kythuat')), db)).authority.permissions.size === 1,
+  'EMPLOYEE có đúng {attendance:read, print:read}',
+  JSON.stringify(empPerms) === JSON.stringify(['attendance:read', 'print:read']),
+  empPerms.join(', '),
+);
+// Và quan trọng hơn số quyền: phạm vi dữ liệu phải là SELF, nếu không
+// "xem được chấm công của mình" biến thành "xem được của cả công ty".
+const empScopes = (await authenticate(req(await tokenFor('nv.kythuat')), db)).authority.scopes;
+check(
+  'EMPLOYEE bị giới hạn phạm vi SELF',
+  empScopes.length > 0 && empScopes.every((s) => s.level === 'SELF'),
+  empScopes.map((s) => s.level).join(',') || '(khong co pham vi)',
 );
 
 // --- 5. Header và lỗi --------------------------------------------------------

@@ -1,4 +1,5 @@
 import { notFound } from 'next/navigation';
+import { requirePageSession } from '@/lib/page-auth';
 import { desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { policyAuditLogs, policyKinds, policyVersions } from '@/db/schema';
@@ -7,6 +8,8 @@ import { Badge, Card } from '@/components/ui';
 export const dynamic = 'force-dynamic';
 
 export default async function KindPage({ params }: { params: Promise<{ kind: string }> }) {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const { kind } = await params;
   const db = getDb();
 

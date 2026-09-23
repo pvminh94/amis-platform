@@ -1,4 +1,5 @@
 import { asc, eq } from 'drizzle-orm';
+import { requirePageSession } from '@/lib/page-auth';
 import { notFound } from 'next/navigation';
 import { isUuid } from '@/lib/uuid';
 import { getDb } from '@/db/client';
@@ -23,6 +24,8 @@ export default async function ApprovalDetailPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const { id } = await params;
   // Chặn ở đây: id không đúng dạng UUID sẽ làm PostgreSQL ném 22P02 và người
   // dùng nhận 500 thay vì 404.

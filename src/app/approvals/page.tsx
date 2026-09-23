@@ -1,4 +1,5 @@
 import { desc } from 'drizzle-orm';
+import { requirePageSession } from '@/lib/page-auth';
 import { getDb } from '@/db/client';
 import { approvalRequests } from '@/db/schema';
 import { Badge, Card, Alert } from '@/components/ui';
@@ -16,6 +17,8 @@ function toneOf(state: string): 'active' | 'warn' | 'danger' | 'neutral' {
 }
 
 export default async function ApprovalsIndexPage() {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const db = getDb();
   const rows = await db.select().from(approvalRequests).orderBy(desc(approvalRequests.createdAt));
 

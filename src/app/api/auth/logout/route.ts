@@ -3,7 +3,7 @@
 import { NextResponse } from 'next/server';
 import { getDb } from '@/db/client';
 import { logout } from '@/lib/auth';
-import { clearRefreshCookie, readCookie } from '@/lib/cookies';
+import { clearRefreshCookie, clearSessionCookie, readCookie } from '@/lib/cookies';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,9 +13,12 @@ export async function POST(req: Request) {
   return NextResponse.json(
     { revoked },
     {
-      headers: {
-        'Set-Cookie': clearRefreshCookie(),
-      },
+      headers: (() => {
+        const h = new Headers();
+        h.append('Set-Cookie', clearRefreshCookie());
+        h.append('Set-Cookie', clearSessionCookie());
+        return h;
+      })(),
     },
   );
 }

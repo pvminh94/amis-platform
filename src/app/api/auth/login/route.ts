@@ -15,9 +15,25 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/db/client';
 import { login, checkRateLimit, AuthError } from '@/lib/auth';
 import { extractClientIp } from '@/engine/workflow';
-import { refreshCookie } from '@/lib/cookies';
+import { refreshCookie, sessionCookie } from '@/lib/cookies';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * Hai cookie: `refresh_token` (Path=/api/auth, 14 ngày) và `access_token`
+ * (Path=/, 15 phút) cho các trang RSC.
+ *
+ * Phải dùng `Headers.append` chứ không phải object: một object chỉ giữ được MỘT
+ * giá trị cho cùng một tên header, nên cookie thứ hai sẽ âm thầm ghi đè cookie
+ * thứ nhất — và lỗi đó không hiện ở đâu cả, chỉ thấy "đăng nhập xong vào trang
+ * vẫn bị đẩy về /login".
+ */
+function authCookies(refresh: string, access: string, secure: boolean): Headers {
+  const h = new Headers();
+  h.append('Set-Cookie', refreshCookie(refresh, 14, secure));
+  h.append('Set-Cookie', sessionCookie(access, 900, secure));
+  return h;
+}
 
 export async function POST(req: Request) {
   const headers: Record<string, string | undefined> = {};
@@ -65,9 +81,7 @@ export async function POST(req: Request) {
         // expiresIn để client biết khi nào cần làm mới, thay vì đoán.
         expiresIn: 900,
       },
-      {
-        headers: { 'Set-Cookie': refreshCookie(result.refreshToken, 14, secure) },
-      },
+      { headers: authCookies(result.refreshToken, result.accessToken, secure) },
     );
   } catch (e) {
     const code = e instanceof AuthError ? e.code : 'AUTH_FAILED';

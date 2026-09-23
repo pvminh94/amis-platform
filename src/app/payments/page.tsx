@@ -1,4 +1,5 @@
 import { desc, eq, sql } from 'drizzle-orm';
+import { requirePageSession } from '@/lib/page-auth';
 
 import { Alert, Badge, Card } from '@/components/ui';
 import { getDb } from '@/db/client';
@@ -17,6 +18,8 @@ const TONE: Record<string, 'neutral' | 'active' | 'warn' | 'danger'> = {
 };
 
 export default async function PaymentsPage() {
+  // Trang RSC phai tu kiem tra phien — xem src/lib/page-auth.ts
+  await requirePageSession();
   const db = getDb();
 
   const batches = await db

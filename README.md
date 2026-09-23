@@ -338,12 +338,23 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **13** | ~~Nối chấm công vào lương~~ ✅ bỏ map fixture hardcode trong `run-payroll`, đọc `daily_attendance`; thêm phụ cấp đêm 30% + OT đêm 200/210/270/390%; trang kỳ lương hiện **công thức đã chạy** cho từng thành phần | ✅ |
 | **15** | ~~Docker + triển khai~~ ✅ Dockerfile 3 tầng (standalone), compose `db`/`migrate`/`app`, `/api/health` có ping DB, `docs/deployment.md`. Dọn DB trắng lộ ra **3 lỗi seed thật** — xem ghi chú thiết kế | ✅ |
 | **14** | ~~File thanh toán ngân hàng~~ ✅ `employee_bank_accounts` + `bank_payment_batches`, định dạng VCB/TCB/CTG/MBB là **tham số** (kind thứ 11), nội dung file lưu kèm SHA-256 và server từ chối trả nếu băm lệch, một kỳ một lô ép bằng unique index riêng phần, trang `/payments` | ✅ |
+| **18** | ~~Bảo vệ các trang RSC~~ ✅ **Lỗ hổng nghiêm trọng:** mọi trang render phía server đọc DB và trả dữ liệu thật mà KHÔNG kiểm tra phiên — `curl /payroll` không cần đăng nhập vẫn ra tổng lương. Nguyên nhân: API đòi header `Authorization` còn trang chỉ nhìn thấy cookie, mà `refresh_token` cố ý đặt `Path=/api/auth` nên không tới được trang. Nay có cookie phiên `access_token` (`Path=/`, 15 phút) + `requirePageSession()` ở 12 trang + cổng chặn ở middleware. Kèm 21 test chống tái phạm | ✅ |
 | **17** | ~~Parser giao thức thiết bị~~ ✅ ADMS/Push SDK (Ronald Jack, ZKTeco) + Hikvision ISAPI (JSON/XML/multipart, Digest RFC 2617). Hai webhook thật, xác thực bằng khoá mỗi máy, khử trùng lặp bằng ràng buộc DB. **Sửa 5 lỗi khi port** — xem ghi chú thiết kế | ✅ |
 | **16** | ~~Geofence + chống giả mạo khuôn mặt~~ ✅ port từ Phase 1 thành policy kind thứ **12** (GEOFENCE) và thứ **13** (LIVENESS). Haversine + point-in-polygon + đối soát BSSID; FFT 2D thật để bắt vân Moiré của màn hình, Laplacian để bắt ảnh in. Kết luận ghi vào `raw_punches` tại thời điểm kiểm tra. **Tìm thấy và sửa một bug 41%** khi port | ✅ |
 
 ---
 
 ## Ghi chú thiết kế
+
+**Hai đường vào dữ liệu thì phải canh cả hai — và test phải đi qua đường ít được nghĩ tới.** Lỗ hổng trang RSC sống qua 18 phase mà không test nào bắt được, vì **mọi test đều gọi API**, và API thì có `requirePermission` đầy đủ. Trang RSC là một đường vào hoàn toàn khác: nó chạy trên server, đọc thẳng DB, và chỉ nhìn thấy cookie. Một bộ test chỉ đi qua đường được canh thì xanh mãi trong khi đường kia hở. Bài học rút ra không phải "thêm test cho trang" mà là **liệt kê các đường vào dữ liệu trước, rồi mới viết test**.
+
+**Vì sao phải thêm cookie THỨ HAI chứ không nới path của `refresh_token`.** `refresh_token` đặt `Path=/api/auth` là cố ý: thu hẹp phạm vi nó bị gửi đi, giảm rò rỉ. Nới thành `Path=/` thì token sống 14 ngày đi kèm mọi request, kể cả request tới máy chủ tĩnh hay log của proxy. Nên giữ nguyên token dài hạn ở path hẹp, và cho access token — vốn chỉ sống 15 phút và là JWT ký bằng secret của server — đi thêm một cookie `Path=/`. Phạm vi phơi bày ngắn, và không thể tự tạo.
+
+**Một object chỉ giữ được MỘT giá trị cho cùng một tên header.** `{ headers: { 'Set-Cookie': a } }` rồi thêm `Set-Cookie: b` là cookie thứ hai **âm thầm ghi đè** cookie thứ nhất. Không có lỗi nào kêu lên; chỉ thấy "đăng nhập xong vào trang vẫn bị đẩy về /login". Phải dùng `Headers.append`.
+
+**Xoá cookie sai `Path` thì không xoá được gì.** `clearSessionCookie()` phải mang đúng `Path=/` như lúc tạo. Nếu xoá với path khác, trình duyệt giữ nguyên cookie cũ: người dùng bấm "Đăng xuất", F5 một cái vẫn vào được trang — và tin rằng mình đã đăng xuất trên máy công cộng.
+
+**Một assertion cũ nằm ở HAI chỗ thì sẽ hỏng ở cả hai mà không ai thấy.** `EMPLOYEE chỉ có print:read` (`permissions.size === 1`) được viết ở Phase 9; Phase 14 thêm `attendance:read` cho EMPLOYEE với lý do chính đáng nhưng không cập nhật assertion — và assertion đó được chép ở cả `auth-flow.ts` lẫn `rbac-flow.ts`. Nó đỏ âm thầm từ Phase 14 vì `npm run verify` không chạy demo script. Nay so **đúng tập quyền** thay vì so số lượng: `size === 1` vẫn pass nếu ai đó đổi một quyền này lấy một quyền khác hoàn toàn.
 
 **Lệnh `SET_TIME` gửi giờ UTC cho cái máy đang chờ giờ địa phương.** Bản Phase 1 viết `new Date().toISOString().slice(0,19)` bên trong `buildAdmsResponse`. Hai hậu quả cùng lúc: hàm không kiểm thử được (không khẳng định được nội dung lệnh), và `toISOString()` là **giờ UTC** trong khi máy chờ giờ địa phương — với máy ở Việt Nam thì mỗi lần đồng bộ, đồng hồ bị đặt **lùi 7 tiếng**. Kiểm chứng bằng cách cho máy "nhận" lệnh rồi parse lại: bản cũ ra 01:30 giờ VN trong khi thực tế là 08:30. Máy vẫn chấm công được, chỉ sai giờ, nên lỗi này sống rất lâu — và mọi ca đêm bị tính sang ngày hôm trước. Nay `now` và `tzOffsetHours` là tham số.
 

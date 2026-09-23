@@ -122,7 +122,17 @@ const empAuth = await loadAuthority(emp!.id, db);
 const dhAuth = await loadAuthority(dh!.id, db);
 check('HR_ADMIN có payroll:run', hrAuth.permissions.has('payroll:run'));
 check('HR_ADMIN KHÔNG có user:manage', !hrAuth.permissions.has('user:manage'));
-check('EMPLOYEE chỉ có print:read', empAuth.permissions.size === 1 && empAuth.permissions.has('print:read'));
+// ĐÃ SỬA: assertion này viết ở Phase 9, còn Phase 14 đã thêm attendance:read cho
+// EMPLOYEE (nhân viên xem chấm công CỦA MÌNH, phạm vi SELF chặn phần còn lại) mà
+// không cập nhật ở đây. Cùng một assertion cũ nằm ở CẢ HAI demo script — đó là lý
+// do nó đỏ âm thầm mấy phase liền mà không ai thấy: không có chỗ nào chạy cả hai.
+// So ĐÚNG TẬP QUYỀN, không so số lượng.
+const empPerms = [...empAuth.permissions].sort();
+check(
+  'EMPLOYEE có đúng {attendance:read, print:read}',
+  JSON.stringify(empPerms) === JSON.stringify(['attendance:read', 'print:read']),
+  empPerms.join(', '),
+);
 check('DEPT_HEAD có approval:act', dhAuth.permissions.has('approval:act'));
 
 console.log('\n[7] Phạm vi dữ liệu — cùng quyền, khác dữ liệu được thấy');
