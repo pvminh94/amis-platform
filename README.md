@@ -131,6 +131,15 @@ src/engine/money.ts         roundVnd + clampBase (dùng chung cho cả hai engin
 scripts/seed-bhxh.ts        seed VN_BHXH, idempotent
 tests/si.spec.ts            20 test cho engine + ràng buộc pháp lý BHXH
 tests/helpers.ts            expectSchemasAgree — so JSON Schema với Zod
+
+src/engine/formula.ts       ★ port NGUYÊN KHỐI từ Phase 1: tokenizer → parser
+                              → AST → evaluator. Không eval, không Function.
+src/policy/salary-params.ts ★ LOẠI THỨ BA: công thức lương là DỮ LIỆU
+src/engine/salary.ts        calculateSalary — chạy công thức theo sequence
+scripts/seed-salary.ts      seed + demo chạy xuyên cả ba engine
+tests/formula.spec.ts       30 test port theo (phần PIT của Phase 1 bỏ, đã có
+                            policy.spec.ts viết lại cho engine mới)
+tests/salary.spec.ts        27 test cho công thức lương
 ```
 
 ### Đã kiểm chứng
@@ -142,7 +151,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              77/77 test
+  ✓ vitest              134/134 test
 ```
 
 Test đáng chú ý:
@@ -163,6 +172,7 @@ npm run db:setup            # migrate + EXCLUDE constraint
 npm run test                # 58 test
 npm run demo                # demo đổi luật thuế
 npm run seed:bhxh           # seed loại chính sách VN_BHXH
+npm run seed:salary         # seed công thức lương + demo cả ba engine
 npm run dev                 # giao diện tại http://localhost:3100
 ```
 
@@ -185,7 +195,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 |---|---|---|
 | **1** | Policy Registry + engine thuế | ✅ xong, đã kiểm chứng |
 | **2** | Next.js UI: trang quản lý chính sách, form tự sinh từ JSON Schema | ✅ xong, đã kiểm chứng |
-| **3** | Mở rộng loại chính sách: ~~BHXH~~ ✅ · ngưỡng duyệt ⬜ · công thức lương ⬜ | 🔄 đang làm |
+| **3** | Mở rộng loại chính sách: ~~BHXH~~ ✅ · ~~công thức lương~~ ✅ · ngưỡng duyệt ⬜ | 🔄 gần xong |
 | **4** | Workflow designer (React Flow) + rule engine biểu thức | ⬜ |
 | **5** | Report builder + print format (HTML/CSS → PDF) | ⬜ |
 | **6** | Chuyển nghiệp vụ HRM sang platform (Employee, PayRun thành entity có chính sách) | ⬜ |
@@ -193,6 +203,13 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 ---
 
 ## Ghi chú thiết kế
+
+**Hai lỗ hổng thật trong engine công thức, phát hiện bằng test.** Port engine từ Phase 1 xong, test mới lập tức bắt được hai thứ:
+
+1. **Rò rỉ chuỗi prototype.** Evaluator tra biến bằng toán tử `in`, mà `in` đi theo chuỗi prototype — nên `'constructor' in ctx` đúng trong MỌI ngữ cảnh, kể cả ngữ cảnh rỗng. `evalFormula('constructor', {})` trả về chính hàm `Object`, `evalFormula('__proto__', {})` trả về object prototype. Không phải thực thi mã tuỳ ý (không có eval, và `.` là một phần của định danh nên không truy cập lồng được), nhưng đưa một `Function` vào pipeline tính tiền thì mọi phép toán sau đó thành `NaN`. Đã sửa sang `hasOwnProperty`.
+2. **Chia cho 0 trả về 0.** `baseSalary * workedDays / standardDays` với `standardDays = 0` sẽ trả 0đ — cả kỳ lương chi 0đ mà không dòng log nào báo. Không sửa mặc định (30 test Phase 1 khoá hành vi đó) mà thêm tuỳ chọn `onDivisionByZero`; engine lương truyền `'throw'`.
+
+**Vì sao không viết lại parser.** `formula.ts` là 515 dòng đã chạy thật trên VPS và đã bắt được lỗi. Viết lại một bộ parser mới "cho gọn" là cách nhanh nhất để đưa lỗ hổng bảo mật vào lại — và hai lỗ hổng trên chứng minh điều ngược lại: chính việc giữ nguyên code cũ rồi VIẾT TEST MỚI cho nó đã lòi ra lỗi.
 
 **Bằng chứng cho "thêm một loại = một dòng".** `VN_BHXH` là loại chính sách thứ hai, và là phép thử thật cho kiến trúc này vì nó KHÔNG có form viết tay. Kiểm chứng bằng `grep`: không một file `.tsx` nào trong `src/` chứa `socialInsurance`, `referenceSalary`, `regionalMinimumWages` hay bất kỳ tên trường nào của bảo hiểm — `SchemaForm` không biết bảo hiểm là gì, nó chỉ đọc JSON Schema. Thứ duy nhất thêm vào tầng API là một dòng trong map `VALIDATORS` (và `nameVi` đã được gộp vào chính map đó, vì trước đây phải sửa hai chỗ). Mở `/policies/VN_BHXH/new`: form tự sinh, gồm cả object lồng nhau cho tỷ lệ NLĐ/NSDLĐ và bảng thêm/xoá dòng cho lương tối thiểu vùng.
 
