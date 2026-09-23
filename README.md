@@ -140,6 +140,11 @@ scripts/seed-salary.ts      seed + demo chạy xuyên cả ba engine
 tests/formula.spec.ts       30 test port theo (phần PIT của Phase 1 bỏ, đã có
                             policy.spec.ts viết lại cho engine mới)
 tests/salary.spec.ts        27 test cho công thức lương
+
+src/policy/approval-params.ts ★ LOẠI THỨ TƯ: ngưỡng duyệt
+src/engine/approval.ts        resolveApprovalChain — trả về CHUỖI người duyệt
+scripts/seed-approval.ts      seed + demo chuỗi duyệt
+tests/approval.spec.ts        21 test cho ngưỡng duyệt
 ```
 
 ### Đã kiểm chứng
@@ -151,7 +156,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              134/134 test
+  ✓ vitest              155/155 test
 ```
 
 Test đáng chú ý:
@@ -173,6 +178,8 @@ npm run test                # 58 test
 npm run demo                # demo đổi luật thuế
 npm run seed:bhxh           # seed loại chính sách VN_BHXH
 npm run seed:salary         # seed công thức lương + demo cả ba engine
+npm run seed:approval       # seed ngưỡng duyệt
+npm run seed:all            # cả bốn loại chính sách
 npm run dev                 # giao diện tại http://localhost:3100
 ```
 
@@ -195,7 +202,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 |---|---|---|
 | **1** | Policy Registry + engine thuế | ✅ xong, đã kiểm chứng |
 | **2** | Next.js UI: trang quản lý chính sách, form tự sinh từ JSON Schema | ✅ xong, đã kiểm chứng |
-| **3** | Mở rộng loại chính sách: ~~BHXH~~ ✅ · ~~công thức lương~~ ✅ · ngưỡng duyệt ⬜ | 🔄 gần xong |
+| **3** | Mở rộng loại chính sách: ~~BHXH~~ ✅ · ~~công thức lương~~ ✅ · ~~ngưỡng duyệt~~ ✅ | ✅ xong, đã kiểm chứng |
 | **4** | Workflow designer (React Flow) + rule engine biểu thức | ⬜ |
 | **5** | Report builder + print format (HTML/CSS → PDF) | ⬜ |
 | **6** | Chuyển nghiệp vụ HRM sang platform (Employee, PayRun thành entity có chính sách) | ⬜ |
@@ -203,6 +210,10 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 ---
 
 ## Ghi chú thiết kế
+
+**Chuỗi duyệt lấy từ đường duyệt của luật, không từ thứ bậc toàn cục.** Bản đầu tiên của `resolveApprovalChain` dựng chuỗi bằng "mọi cấp có `order` ≤ cấp khớp". Sai: `HR_HEAD` có thứ bậc 3, nằm giữa `DEPT_HEAD` (2) và `CHIEF_ACCOUNTANT` (4), nên sẽ bị kéo vào duyệt một đề nghị thanh toán 300 triệu — dù nhân sự không liên quan gì tới chi tiền. Mỗi luật phải định nghĩa đường duyệt RIÊNG; `order` chỉ để sắp xếp hiển thị. Có test khoá đúng trường hợp này.
+
+**Vì sao ngưỡng duyệt trả về chuỗi chứ không phải một người.** Cách "chỉ người ở bậc khớp" nghe hợp lý nhưng tạo lỗ hổng: đơn nghỉ 10 ngày sẽ bỏ qua quản lý trực tiếp — người duy nhất biết nhân viên đó có thực sự nghỉ được hay không. Chuỗi dài hơn nhưng không có lỗ hổng.
 
 **Hai lỗ hổng thật trong engine công thức, phát hiện bằng test.** Port engine từ Phase 1 xong, test mới lập tức bắt được hai thứ:
 

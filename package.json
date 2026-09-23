@@ -18,7 +18,9 @@
     "build": "next build",
     "start": "next start -p 3100 -H 0.0.0.0",
     "seed:bhxh": "tsx scripts/seed-bhxh.ts",
-    "seed:salary": "tsx scripts/seed-salary.ts"
+    "seed:salary": "tsx scripts/seed-salary.ts",
+    "seed:approval": "tsx scripts/seed-approval.ts",
+    "seed:all": "npm run demo && npm run seed:bhxh && npm run seed:salary && npm run seed:approval"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",

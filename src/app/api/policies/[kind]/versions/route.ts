@@ -4,6 +4,7 @@ import { createVersion, PolicyError } from '@/policy/registry';
 import { vnPitParamsSchema, vnPitJsonSchema } from '@/policy/tax-params';
 import { vnSiParamsSchema, vnSiJsonSchema } from '@/policy/si-params';
 import { vnSalaryParamsSchema, vnSalaryJsonSchema } from '@/policy/salary-params';
+import { approvalParamsSchema, approvalJsonSchema } from '@/policy/approval-params';
 import { ensureKind } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
@@ -43,6 +44,11 @@ const VALIDATORS: Record<
     nameVi: 'Công thức lương',
     schema: vnSalaryParamsSchema,
     json: vnSalaryJsonSchema,
+  },
+  APPROVAL: {
+    nameVi: 'Ngưỡng duyệt',
+    schema: approvalParamsSchema,
+    json: approvalJsonSchema,
   },
 };
 
