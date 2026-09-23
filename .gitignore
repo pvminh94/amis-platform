@@ -8,7 +8,14 @@ dist/
 # khi docs/deployment.md bảo họ `cp .env.docker.example .env`.
 !.env.example
 !.env.docker.example
-drizzle/meta/
+# KHÔNG ignore drizzle/meta/. Đã từng ignore và đó là lỗi nghiêm trọng:
+# `drizzle-kit migrate` BẮT BUỘC phải có meta/_journal.json (danh mục migration)
+# và các meta/*_snapshot.json. Thiếu nó thì ai clone repo cũng gặp
+#   Error: Can't find meta/_journal.json file
+# ngay ở `npm run db:setup` — tức là repo không cài đặt được. Máy dev không thấy
+# lỗi này vì thư mục meta/ nằm sẵn trên đĩa, chỉ người clone mới lãnh đủ.
+# Cùng một loại lỗi với .env.docker.example ở trên: thứ gì lệnh chạy cần thì phải
+# vào git, dù nó là file sinh ra.
 *.log
 .next/
 tsconfig.tsbuildinfo

@@ -1,0 +1,104 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1790124243757,
+      "tag": "0000_init",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790132175845,
+      "tag": "0001_thick_mojo",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790132283006,
+      "tag": "0002_noisy_azazel",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790133414390,
+      "tag": "0003_petite_prodigy",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790134023635,
+      "tag": "0004_faulty_jubilee",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790135306177,
+      "tag": "0005_many_tigra",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790135836375,
+      "tag": "0006_aspiring_puck",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790140739404,
+      "tag": "0007_crazy_ikaris",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790141149147,
+      "tag": "0008_groovy_gauntlet",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790147031487,
+      "tag": "0009_hard_elektra",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790147496296,
+      "tag": "0010_gray_warstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790150818553,
+      "tag": "0011_neat_mandroid",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790153140630,
+      "tag": "0012_lowly_ink",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790153209774,
+      "tag": "0013_thankful_thor_girl",
+      "breakpoints": true
+    }
+  ]
+}
