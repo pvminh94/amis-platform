@@ -7,6 +7,7 @@ import { vnSalaryParamsSchema, vnSalaryJsonSchema } from '@/policy/salary-params
 import { approvalParamsSchema, approvalJsonSchema } from '@/policy/approval-params';
 import { printParamsSchema, printJsonSchema } from '@/policy/print-params';
 import { reportParamsSchema, reportJsonSchema } from '@/policy/report-params';
+import { glMapParamsSchema, glMapJsonSchema } from '@/policy/gl-params';
 import { ensureKind } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
@@ -63,6 +64,11 @@ const VALIDATORS: Record<
     nameVi: 'Định nghĩa báo cáo',
     schema: reportParamsSchema,
     json: reportJsonSchema,
+  },
+  GL_MAP: {
+    nameVi: 'Định khoản lương vào sổ cái',
+    schema: glMapParamsSchema,
+    json: glMapJsonSchema,
   },
 };
 

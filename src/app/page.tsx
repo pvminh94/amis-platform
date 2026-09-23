@@ -35,6 +35,7 @@ export default async function HomePage() {
           ['/reports', 'Báo cáo', 'Định nghĩa JSON trong database, không chứa SQL'],
           ['/approvals', 'Đơn xin duyệt', 'Ngưỡng là dữ liệu, máy trạng thái là code'],
           ['/print', 'Mẫu in', 'HTML/CSS là dữ liệu — sửa mẫu không cần deploy'],
+          ['/gl', 'Sổ cái', 'Ba bút toán kép cho một kỳ lương, TK 334 phải về 0'],
         ].map(([href, label, hint]) => (
           <a
             key={href}

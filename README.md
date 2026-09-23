@@ -194,7 +194,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              345/345 test
+  ✓ vitest              374/374 test
 ```
 
 Test đáng chú ý:
@@ -205,6 +205,10 @@ Test đáng chú ý:
 - `resolvePolicy` vào khoảng trống → **ném lỗi rõ ràng**, không dùng giá trị mặc định
 - **JSON Schema và Zod schema phải cùng tập trường** — bắt được bug thật, xem ghi chú thiết kế bên dưới
 - Giá trị do `defaultsFromSchema` sinh ra **không được phép lưu** (form không cho lưu bộ tham số rỗng)
+- **TK 334 về 0** sau ba bút toán — phép thử bắt được cả "ghi thiếu" lẫn "ghi trùng"
+- Chi tiết bảo hiểm lệch tổng đã lưu **một đồng** → ném lỗi, không ghi sổ
+- Kỳ lương không ai bị khấu trừ → **bỏ qua** bút toán khấu trừ, không tạo bút toán rỗng
+- Số hiệu bút toán trùng → ràng buộc `UNIQUE` ở PostgreSQL, giao dịch roll back
 
 ### Chạy thử
 
@@ -218,9 +222,11 @@ npm run seed:bhxh           # seed loại chính sách VN_BHXH
 npm run seed:salary         # seed công thức lương + demo cả ba engine
 npm run seed:approval       # seed ngưỡng duyệt
 npm run seed:print          # seed mẫu in
-npm run seed:all            # cả năm loại chính sách
-npm run payroll             # seed 12 nhân viên + tính kỳ 09/2026
 npm run seed:report         # seed 2 báo cáo (cần chạy payroll trước)
+npm run seed:gl             # danh mục tài khoản + định khoản lương
+npm run demo:gl             # ghi sổ kỳ 09/2026, in bút toán + bảng đối chiếu
+npm run seed:all            # cả bảy loại chính sách
+npm run payroll             # seed 12 nhân viên + tính kỳ 09/2026
 npm run demo:approval       # chạy thử quy trình duyệt end-to-end
 npm run seed:auth           # 14 quyền, 5 vai trò, 6 người dùng
 npm run demo:auth           # 32 kiểm tra luồng xác thực + RBAC
@@ -251,10 +257,23 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **5** | Print format ✅ · report builder ✅ (định nghĩa JSON, engine ghép SQL từ whitelist) | ✅ |
 | **6** | Employee + PayRun thật: bảng `employees`, `payslips`, tính cả kỳ trong một transaction, in phiếu từ số liệu đã lưu | ✅ |
 | **7** | JWT + refresh HttpOnly có xoay vòng, bcrypt salt 10, RBAC 2 tầng (quyền + phạm vi dữ liệu), rate limit trong DB, security headers | ✅ |
+| **8** | ~~Cầu nối HR → sổ cái~~ ✅ ba bút toán kép cho một kỳ lương, định khoản là tham số, cân đối ép ở **hai** tầng, chống ghi trùng bằng khoá duy nhất | ✅ |
 
 ---
 
 ## Ghi chú thiết kế
+
+**Vì sao cân đối bút toán bị ép ở hai tầng.** `assertBalanced` trong engine ném lỗi trước khi bút toán rời khỏi hàm, và PostgreSQL còn một ràng buộc `CHECK (total_debit = total_credit)` trên bảng `gl_entries`. Nghe thừa, nhưng hai tầng này bắt hai loại lỗi khác nhau: engine bắt lỗi do **logic sinh bút toán** sai, còn ràng buộc DB bắt mọi đường ghi khác — một script chạy tay, một lần migrate dở, một endpoint sau này ai đó thêm vào mà quên gọi engine. Kiểm chứng bằng cách ghi SQL thô cố tình lệch: DB trả `23514`. Chỉ tin vào kiểm tra ở tầng ứng dụng nghĩa là tin rằng mọi đường vào dữ liệu đều đi qua đúng một hàm, và đó là giả định không giữ được lâu.
+
+**Bất biến mạnh nhất của kế toán lương: TK 334 về 0.** Sau ba bút toán — ghi nhận chi phí (Có 334 = gross), trích khấu trừ (Nợ 334 = bảo hiểm NLĐ + thuế + tạm ứng), trả lương (Nợ 334 = net) — số dư 334 phải đúng bằng 0. Nếu còn dư thì hoặc ghi thiếu hoặc ghi trùng, và phép thử này bắt được **cả hai** mà không cần biết trước con số đúng là bao nhiêu. Đây là lý do chọn nó làm kiểm tra chính thay vì so từng số dư với giá trị mong đợi: một phép so khớp số học nội tại không thể sai vì fixture sai.
+
+**Số dư đọc theo bên bình thường, và cột đặt theo dấu thật.** TK 334 dư Có 500 triệu là hoàn toàn bình thường; hiển thị nó thành "−500 triệu" bắt kế toán tự đảo dấu trong đầu cho từng dòng. Nên `balance` được tính theo `normalSide`. Nhưng **cột** SD Nợ / SD Có thì phải đặt theo dấu thật của (nợ − có), không theo `normalSide`: TK 1121 sau khi chi tiền mang số dư **Có**, và bản đầu tiên tôi đặt cột theo bên bình thường nên in ra "SD Nợ 470.373.671" — bảng vẫn thẳng hàng, tổng vẫn cân, nhưng ngược dấu. Loại lỗi này không có gì tự nó kêu lên.
+
+**Vì sao kỳ lương không có khấu trừ thì bỏ qua bút toán, chứ không báo lỗi.** Phải phân biệt hai trường hợp trông giống nhau: **0 dòng** nghĩa là nghiệp vụ không phát sinh (không ai bị trừ gì) — sinh ra bút toán rỗng còn tệ hơn không có gì, vì nó nằm trong sổ như thể đã hạch toán một nghiệp vụ không tồn tại; còn **≥1 dòng nhưng chỉ một bên** là dữ liệu sai và phải ném lỗi. Kiểm tra cân đối vì thế chạy *sau* khi lọc bỏ bút toán rỗng, để trường hợp thứ hai vẫn bị bắt.
+
+**Chống ghi trùng bằng khoá duy nhất, không bằng kiểm tra ở tầng ứng dụng.** `entry_no` là khoá duy nhất trong PostgreSQL, nên lần ghi thứ hai nổ ràng buộc và giao dịch roll back. Cách quen thuộc — đọc xem kỳ này đã ghi chưa rồi mới ghi — luôn có cửa race: hai yêu cầu cùng đọc được "chưa", rồi cả hai cùng ghi, và sổ có gấp đôi chi phí lương. Ràng buộc ở DB thì không có cửa nào, vì nó kiểm tra ngay tại thời điểm ghi.
+
+**Fixture kế toán phải lấy từ dữ liệu đã tính thật.** Fixture đầu tiên tôi bịa số và nó tự mâu thuẫn: `siEmployer = 4.532.500` nhưng bốn khoản chi tiết cộng lại chỉ 4.392.130. Bút toán lập tức không cân và test nổ ngay — bất biến đã làm đúng việc. "Cộng tay cho khớp" là cách nhanh nhất để tạo ra một bộ số trông đúng nhưng sai; nay engine còn kiểm tra thẳng điều này (`SI_BREAKDOWN_MISMATCH`), vì hai con số đó mô tả cùng một sự thật và được lưu ở hai chỗ nên chúng *có thể* lệch nhau.
 
 **Vì sao không dùng Puppeteer/Chromium để xuất PDF.** Chromium ~170MB tải về và ~300MB RAM khi chạy, trong sandbox 2GB đang chạy chung PostgreSQL và dev server. Đổi lại ta được một file PDF — trong khi trình duyệt đã có sẵn "In → Lưu thành PDF" với chất lượng dàn trang tốt hơn hầu hết thư viện. ERPNext cũng làm đúng vậy: Print Format render HTML, trình duyệt lo phần PDF. Cái khó và đáng giá nằm ở TẦNG TEMPLATE, và đó là thứ `engine/print.ts` làm.
 

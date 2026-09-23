@@ -225,6 +225,21 @@ export async function generatePayRun(
         uiBase: si.uiBase,
         siEmployee: si.employee.total,
         siEmployer: si.employer.total,
+        // Lưu chi tiết để sổ cái tách được 3383/3384/3386/3388 mà không phải
+        // tính lại — tính lại lúc ghi sổ sẽ lệch nếu chính sách đã đổi.
+        siBreakdown: {
+          employee: {
+            social: si.employee.socialInsurance,
+            health: si.employee.healthInsurance,
+            unemployment: si.employee.unemployment,
+          },
+          employer: {
+            social: si.employer.socialInsurance,
+            health: si.employer.healthInsurance,
+            unemployment: si.employer.unemployment,
+            accident: si.employer.accident,
+          },
+        },
         pit: pit.pit,
         netPay: net,
       });

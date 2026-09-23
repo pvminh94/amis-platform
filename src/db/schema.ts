@@ -410,6 +410,17 @@ export const payslips = pgTable(
     siEmployee: integer('si_employee').notNull(),
     siEmployer: integer('si_employer').notNull(),
 
+    /**
+     * CHI TIẾT bảo hiểm: { employee: {social, health, unemployment}, employer:
+     * {social, health, unemployment, accident} }.
+     *
+     * Cần cho sổ cái: BHXH/BHYT/BHTN hạch toán ba tài khoản KHÁC NHAU
+     * (3383/3384/3386), và quỹ TNLĐ-BNN thêm 3388. Chỉ lưu tổng thì không tách
+     * ra được, mà tính lại lúc ghi sổ thì phải resolve chính sách một lần nữa —
+     * và nếu chính sách đã đổi, số tách ra sẽ không khớp với tổng đã lưu.
+     */
+    siBreakdown: jsonb('si_breakdown'),
+
     pit: integer('pit').notNull(),
     netPay: integer('net_pay').notNull(),
 
@@ -719,5 +730,114 @@ export const rateLimitBuckets = pgTable(
   },
   (t) => ({
     uqBucketWindow: unique('uq_rate_limit_bucket_window').on(t.bucketKey, t.windowStart),
+  }),
+);
+
+// ===========================================================================
+// SỔ CÁI — KẾ TOÁN KÉP (Phase 8)
+// ===========================================================================
+
+/**
+ * Danh mục tài khoản.
+ *
+ * Số hiệu theo Thông tư 200/2014. CỐ ĐỊNH những tài khoản nghiệp vụ lương dùng
+ * tới — không phải vì không muốn cho sửa, mà vì đổi số hiệu tài khoản giữa kỳ
+ * sẽ làm sổ cái không so sánh được với nhau và với báo cáo đã nộp.
+ */
+export const glAccounts = pgTable(
+  'gl_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    code: varchar('code', { length: 12 }).notNull().unique(),
+    nameVi: varchar('name_vi', { length: 200 }).notNull(),
+    /** ASSET | LIABILITY | EQUITY | REVENUE | EXPENSE */
+    type: varchar('type', { length: 12 }).notNull(),
+    /** Nợ (DEBIT) hay Có (CREDIT) — số dư bình thường của tài khoản. */
+    normalSide: varchar('normal_side', { length: 6 }).notNull(),
+    /** Tài khoản cha để cộng dồn theo cấp, vd 338 là cha của 3383/3384/3386. */
+    parentCode: varchar('parent_code', { length: 12 }),
+    active: boolean('active').notNull().default(true),
+  },
+  (t) => ({
+    chkType: check(
+      'chk_gl_accounts_type',
+      sql`${t.type} IN ('ASSET','LIABILITY','EQUITY','REVENUE','EXPENSE')`,
+    ),
+    chkSide: check('chk_gl_accounts_side', sql`${t.normalSide} IN ('DEBIT','CREDIT')`),
+  }),
+);
+
+/**
+ * Một bút toán (journal entry) — đầu phiếu.
+ *
+ * `entryNo` UNIQUE theo (kỳ, loại bút toán). Nếu không, chạy lại việc ghi sổ
+ * cho cùng một kỳ sẽ sinh bản trùng và chi phí bị đội lên gấp đôi — loại lỗi
+ * không ai phát hiện ra cho tới cuối kỳ đối chiếu.
+ */
+export const glEntries = pgTable(
+  'gl_entries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entryNo: varchar('entry_no', { length: 60 }).notNull(),
+    /** Loại nghiệp vụ: SALARY_ACCRUAL | SALARY_DEDUCTION | SALARY_PAYMENT */
+    entryType: varchar('entry_type', { length: 40 }).notNull(),
+    postingDate: date('posting_date', { mode: 'string' }).notNull(),
+    periodYear: integer('period_year').notNull(),
+    periodMonth: integer('period_month').notNull(),
+    memo: text('memo'),
+    /** Tài liệu gốc — để truy ngược từ sổ cái về bảng lương. */
+    sourceType: varchar('source_type', { length: 40 }).notNull(),
+    sourceId: uuid('source_id').notNull(),
+
+    totalDebit: integer('total_debit').notNull(),
+    totalCredit: integer('total_credit').notNull(),
+
+    postedBy: varchar('posted_by', { length: 100 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    // Chống ghi trùng. Đây là ràng buộc quan trọng nhất của bảng này.
+    uqEntryNo: unique('uq_gl_entries_no').on(t.entryNo),
+    idxPeriod: index('idx_gl_entries_period').on(t.periodYear, t.periodMonth),
+    idxSource: index('idx_gl_entries_source').on(t.sourceType, t.sourceId),
+    // TỔNG NỢ PHẢI BẰNG TỔNG CÓ — ép ở tầng DATABASE.
+    // Đây là định nghĩa của kế toán kép; nếu để ứng dụng tự kiểm tra thì một
+    // con đường ghi nào đó quên kiểm tra sẽ làm hỏng sổ cái mà không ai biết.
+    chkBalanced: check('chk_gl_entries_balanced', sql`${t.totalDebit} = ${t.totalCredit}`),
+    chkPositive: check(
+      'chk_gl_entries_positive',
+      sql`${t.totalDebit} >= 0 AND ${t.totalCredit} >= 0`,
+    ),
+  }),
+);
+
+/**
+ * Dòng bút toán — chi tiết Nợ/Có.
+ *
+ * Số tiền là INTEGER (VND, đã làm tròn) chứ không phải NUMERIC/float. Tiền tệ
+ * không được phép có sai số dấu phẩy động: cộng 10.000 dòng lương mà lệch một
+ * đồng thì bảng cân đối không khớp và không ai giải thích được vì sao.
+ */
+export const glLines = pgTable(
+  'gl_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    entryId: uuid('entry_id')
+      .notNull()
+      .references(() => glEntries.id, { onDelete: 'cascade' }),
+    lineNo: integer('line_no').notNull(),
+    accountCode: varchar('account_code', { length: 12 }).notNull(),
+    /** DEBIT | CREDIT */
+    side: varchar('side', { length: 6 }).notNull(),
+    amount: integer('amount').notNull(),
+    memo: text('memo'),
+  },
+  (t) => ({
+    uqEntryLine: unique('uq_gl_lines_entry_line').on(t.entryId, t.lineNo),
+    idxAccount: index('idx_gl_lines_account').on(t.accountCode),
+    chkSide: check('chk_gl_lines_side', sql`${t.side} IN ('DEBIT','CREDIT')`),
+    // Không cho dòng 0 đồng: nó không đổi số dư nhưng làm rối sổ và khiến
+    // "có bao nhiêu dòng" thành một con số vô nghĩa.
+    chkAmount: check('chk_gl_lines_amount', sql`${t.amount} > 0`),
   }),
 );
