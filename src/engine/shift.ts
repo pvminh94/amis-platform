@@ -337,6 +337,54 @@ export interface RotationDef {
   restCode?: string;
   /** Số ngày lệch pha giữa hai kíp liên tiếp */
   phaseStep?: number;
+  /**
+   * Số kíp trong hệ. Không bắt buộc về mặt tính toán (teamIndex là đủ), nhưng có
+   * nó thì xếp lịch mới chặn được "kíp 5" trong hệ chỉ có 4 kíp — lỗi đó không nổ
+   * ở đâu cả, nó chỉ âm thầm xếp một người vào ca sai.
+   */
+  teamCount?: number;
+}
+
+/**
+ * Kiểm tra cấu trúc một định nghĩa hệ xoay.
+ *
+ * Tách ra hàm riêng (chứ không để inline trong `resolveRotationShiftCode`) để
+ * tầng policy schema gọi lại ĐÚNG bộ luật này. Hai bộ luật kiểm tra thì sớm muộn
+ * cũng lệch nhau, và bản lệch sẽ cho lưu một hệ xoay mà engine không resolve được
+ * — tức là lỗi nổ lúc xếp lịch thay vì lúc người dùng bấm lưu.
+ */
+export function validateRotation(rotation: RotationDef): void {
+  const cycle = rotation.cycleLength;
+  if (!Number.isInteger(cycle) || cycle <= 0) {
+    throw new ShiftError('BAD_CYCLE', `cycleLength phải là số nguyên dương, nhận ${cycle}`);
+  }
+  if (rotation.pattern.length !== cycle) {
+    // Số phần tử khác chu kỳ thì "ngày thứ i trong chu kỳ" là câu hỏi không có
+    // đáp án — và nếu im lặng bỏ qua thì lịch xoay sẽ lệch dần mà không ai biết.
+    throw new ShiftError(
+      'PATTERN_LENGTH_MISMATCH',
+      `pattern có ${rotation.pattern.length} phần tử nhưng cycleLength = ${cycle}`,
+    );
+  }
+  if (rotation.pattern.some((c) => typeof c !== 'string' || c.trim() === '')) {
+    throw new ShiftError('EMPTY_PATTERN_CODE', 'pattern có phần tử rỗng — mã ca không được để trống');
+  }
+  if (rotation.phaseStep !== undefined) {
+    if (!Number.isInteger(rotation.phaseStep) || rotation.phaseStep < 0) {
+      throw new ShiftError(
+        'BAD_PHASE_STEP',
+        `phaseStep phải là số nguyên không âm, nhận ${rotation.phaseStep}`,
+      );
+    }
+  }
+  if (rotation.teamCount !== undefined) {
+    if (!Number.isInteger(rotation.teamCount) || rotation.teamCount <= 0) {
+      throw new ShiftError(
+        'BAD_TEAM_COUNT',
+        `teamCount phải là số nguyên dương, nhận ${rotation.teamCount}`,
+      );
+    }
+  }
 }
 
 /**
@@ -354,18 +402,14 @@ export function resolveRotationShiftCode(
   if (!Number.isInteger(teamIndex) || teamIndex < 0) {
     throw new ShiftError('BAD_TEAM_INDEX', `teamIndex phải là số nguyên không âm, nhận ${teamIndex}`);
   }
-  const cycle = rotation.cycleLength;
-  if (!Number.isInteger(cycle) || cycle <= 0) {
-    throw new ShiftError('BAD_CYCLE', `cycleLength phải là số nguyên dương, nhận ${cycle}`);
-  }
-  if (rotation.pattern.length !== cycle) {
-    // Số phần tử khác chu kỳ thì "ngày thứ i trong chu kỳ" là câu hỏi không có
-    // đáp án — và nếu im lặng bỏ qua thì lịch xoay sẽ lệch dần mà không ai biết.
+  validateRotation(rotation);
+  if (rotation.teamCount !== undefined && teamIndex >= rotation.teamCount) {
     throw new ShiftError(
-      'PATTERN_LENGTH_MISMATCH',
-      `pattern có ${rotation.pattern.length} phần tử nhưng cycleLength = ${cycle}`,
+      'TEAM_INDEX_OUT_OF_RANGE',
+      `teamIndex = ${teamIndex} nhưng hệ xoay "${rotation.code}" chỉ có ${rotation.teamCount} kíp`,
     );
   }
+  const cycle = rotation.cycleLength;
 
   const rawDays = diffDays(workDate, anchorDate);
   const phaseShift = (teamIndex * (rotation.phaseStep ?? 2)) % cycle;

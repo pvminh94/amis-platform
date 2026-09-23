@@ -280,6 +280,30 @@ describe('làm thêm giờ', () => {
     expect(r.warnings.some((w) => w.includes('40h/tháng'))).toBe(true);
   });
 
+  it('OT dưới ngưỡng 60 phút thì KHÔNG sinh cảnh báo — nhưng vẫn được tính', () => {
+    // 30 phút OT vẫn nằm nguyên trong otWeekdayMinutes và vẫn được trả tiền.
+    // Cái bị bỏ chỉ là dòng thông báo không đòi hỏi ai làm gì: với dữ liệu thật,
+    // cảnh báo cho mọi OT > 0 làm 266/360 ngày đều "cần xem" và không ai đọc nữa.
+    const r = pairPunches(OFFICE, [at(8), at(17, 30)], 'WORKING_DAY');
+    expect(r.otWeekdayMinutes).toBe(30);
+    expect(r.warnings.some((w) => w.includes('làm thêm'))).toBe(false);
+  });
+
+  it('OT đạt ngưỡng 60 phút thì có cảnh báo', () => {
+    const r = pairPunches(OFFICE, [at(8), at(18)], 'WORKING_DAY');
+    expect(r.otWeekdayMinutes).toBe(60);
+    expect(r.warnings.some((w) => w.includes('làm thêm'))).toBe(true);
+  });
+
+  it('ngưỡng cảnh báo OT đổi được qua tham số', () => {
+    const punches = [at(8), at(17, 30)];
+    expect(
+      pairPunches(OFFICE, punches, 'WORKING_DAY', { otWarningThresholdMin: 15 }).warnings.some(
+        (w) => w.includes('làm thêm'),
+      ),
+    ).toBe(true);
+  });
+
   it('OT dưới 4 giờ thì không cảnh báo', () => {
     const r = pairPunches(OFFICE, [at(8), at(19)], 'WORKING_DAY');
     expect(r.warnings.some((w) => w.includes('40h/tháng'))).toBe(false);
@@ -300,15 +324,42 @@ describe('ngày nghỉ và ngày lễ — mọi giờ đều là OT', () => {
   it('đi làm ngày nghỉ → PRESENT, toàn bộ là OT cuối tuần, công chính = 0', () => {
     const r = pairPunches(OFFICE, [at(8), at(17)], 'WEEKLY_REST');
     expect(r.status).toBe('PRESENT');
-    expect(r.otWeekendMinutes).toBe(540); // không trừ nghỉ vì không có ca kế hoạch
+    // 480 chứ không phải 540: khoảng bao 08:00–17:00 là 540 phút nhưng có 60
+    // phút nghỉ trưa nằm trong đó. Test đầu tiên tôi để 540 vì engine tính vậy —
+    // và ở hệ số 200% thì 60 phút đó là tiền thật trả cho một tiếng không làm.
+    expect(r.otWeekendMinutes).toBe(480);
     expect(r.standardDays).toBe(0); // nếu tính thì sẽ trả lương hai lần
     expect(r.otWeekdayMinutes).toBe(0);
   });
 
   it('đi làm ngày lễ → OT 300%, không phải OT cuối tuần', () => {
     const r = pairPunches(OFFICE, [at(8), at(17)], 'PUBLIC_HOLIDAY');
-    expect(r.otHolidayMinutes).toBe(540);
+    expect(r.otHolidayMinutes).toBe(480);
     expect(r.otWeekendMinutes).toBe(0);
+  });
+
+  it('ca gãy làm ngày lễ: KHE GIỮA HAI ĐOẠN không được tính là OT', () => {
+    // Ca gãy 08:00–12:00 + 14:00–18:00. Quẹt đủ 4 lần.
+    // Khoảng bao là 600 phút nhưng 120 phút ở giữa là giờ nghỉ không lương.
+    // Ở hệ số 300% thì sai chỗ này là trả thừa 50% cho cả ngày.
+    const r = pairPunches(SPLIT, [at(8), at(12), at(14), at(18)], 'PUBLIC_HOLIDAY');
+    expect(r.otHolidayMinutes).toBe(480);
+    expect(r.workedMinutes).toBe(480);
+  });
+
+  it('ngày không xếp ca (ca tổng hợp) thì không bị trừ gì', () => {
+    // Ca tổng hợp chỉ có một đoạn và không khai giờ nghỉ, nên khoảng bao được
+    // giữ nguyên — không có thoả thuận nào để dựa vào mà trừ.
+    const ref = resolveShift(
+      {
+        code: 'OT_REFERENCE',
+        name: 'ref',
+        type: 'OFFICE',
+        segments: [{ name: 'Thực tế', start: '08:00', end: '17:00' }],
+      },
+      D,
+    );
+    expect(pairPunches(ref, [at(8), at(17)], 'WEEKLY_REST').otWeekendMinutes).toBe(540);
   });
 });
 

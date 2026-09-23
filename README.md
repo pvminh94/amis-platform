@@ -194,7 +194,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              495/495 test
+  ✓ vitest              526/526 test (16 file)
 ```
 
 Test đáng chú ý:
@@ -236,6 +236,8 @@ npm run seed:print          # seed mẫu in
 npm run seed:report         # seed 2 báo cáo (cần chạy payroll trước)
 npm run seed:gl             # danh mục tài khoản + định khoản lương
 npm run seed:shift          # 5 định nghĩa ca: hành chính, ca gãy, CA1/CA2/CA3
+npm run seed:attendance     # thiết bị, 11 ngày lễ 2026, hệ xoay, lịch 30 ngày,
+                            # 762 quẹt thẻ — rồi tính công và in đối chiếu
 npm run demo:gl             # ghi sổ kỳ 09/2026, in bút toán + bảng đối chiếu
 npm run demo:rbac           # 17 kiểm tra phân quyền + phân tách nhiệm vụ
 npm run seed:all            # cả tám loại chính sách
@@ -274,6 +276,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **9** | ~~Nối RBAC vào route~~ ✅ `requirePermission`, quyền tra từ DB không từ token, phân tách nhiệm vụ HR ≠ kế toán, `/login` + đổi mật khẩu bắt buộc, chặn open redirect | ✅ |
 | **10** | ~~Engine ca kíp~~ ✅ ca hành chính / ca gãy / **ca đêm vắt 0h** / xoay 3 ca 4 kíp, khung giờ đêm là tham số, định nghĩa ca là policy kind thứ tám | ✅ |
 | **11** | ~~Ghép cặp quẹt thẻ~~ ✅ FIRST-IN/LAST-OUT theo đoạn, suy giờ khi thiếu quẹt nhưng đánh dấu `MISSING_PUNCH`, OT tách 150/200/300% + phần đêm, grace period và mọi ngưỡng là tham số | ✅ |
+| **12** | ~~Chấm công ngày~~ ✅ 5 bảng (`shift_devices` / `raw_punches` chỉ-thêm / `employee_shifts` / `public_holidays` / `daily_attendance` dẫn xuất), hệ xoay là policy kind thứ mười, API + trang `/attendance`, seed 762 quẹt · 360 ngày công | ✅ |
 
 ---
 
@@ -310,6 +313,14 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Việc kiểm tra định nghĩa ca được giao cho chính engine.** `shiftParamsSchema.superRefine` gọi thẳng `resolveShift`: chồng lấn đoạn, giờ nghỉ vượt thời lượng, giờ ra không sau giờ vào, khung đêm vô lý — tất cả chỉ có MỘT bộ luật. Viết lại bộ thứ hai ở tầng validate thì sớm muộn chúng lệch nhau, và bản lệch nhau sẽ cho lưu một ca mà engine không resolve được — tức là lỗi nổ lúc đang xếp lịch chứ không phải lúc người dùng bấm lưu.
 
 **Một lệnh "ensure" mà làm mất dữ liệu thì không còn là ensure.** Bug có sẵn, tìm ra khi `CA_TOI` được đánh số v2 thay vì v1. Hai chỗ cùng sai: (1) nhánh INSERT của `ensureKind` bỏ sót `exclusiveByCode` nên lần tạo đầu tiên luôn nhận `false` từ default của cột; (2) route tạo phiên bản gọi `ensureKind` chỉ với `{code, nameVi, paramsSchema}`, và nhánh UPDATE làm `?? false` — nên **mỗi lần tạo một phiên bản mới, cờ độc quyền của loại đó bị âm thầm đặt về false**. PRINT và REPORT_DEF thoát nạn chỉ vì seed của chúng được chạy lại sau lần POST cuối. Sửa cả hai lớp: `ensureKind` giữ nguyên giá trị hiện có khi người gọi không chỉ định, và `VALIDATORS` khai rõ cờ để route tạo kind đúng ngay lần đầu. Cờ này quyết định cả phạm vi độc quyền lẫn cách đánh số phiên bản, nên sai nó thì `resolvePolicy` không trả lời được "bản nào đang hiệu lực".
+
+**Giờ nghỉ và khe giữa các đoạn không được tính là OT.** Ở hệ số 300% thì sai chỗ này là tiền thật. Nhánh ngày nghỉ/ngày lễ lấy giờ làm theo khoảng bao từ quẹt đầu đến quẹt cuối, và bản đầu tiên trừ không đủ: ca gãy 08:00–12:00 + 14:00–18:00 đi làm ngày lễ được tính **600 phút OT thay vì 480** — trả thừa 50% cho hai tiếng nghỉ giữa ca. Sửa bằng cách trừ cả hai loại khoảng không làm việc: khe giữa các đoạn VÀ khung giờ nghỉ trong từng đoạn. Dữ liệu seed xác nhận: OT lễ giảm từ 129.6h xuống **113.5h**, khớp con số tính tay 112h.
+
+**Một quyết định chỉ được tồn tại ở MỘT chỗ.** Bộ sinh quẹt trong seed tính lại mã ca bằng công thức giống hệt vòng xếp lịch, và hai bản sao lệch nhau đúng một điều kiện (ngày lễ) — kết quả là quẹt được sinh cho người mà lịch ghi là NGHỈ, và OT ngày lễ phình gấp đôi. Sửa bằng cách đọc lại lịch từ DB thay vì tính lại. Cùng họ lỗi với `ensureKind` làm mất `exclusiveByCode`.
+
+**Test chỉ pass nhờ DB chưa có dữ liệu thì không phải test.** `tests/attendance-service.spec.ts` dùng thẳng nhân viên `NV001` của seed và xanh hoàn toàn — cho tới khi chạy `npm run seed:attendance`, lúc đó 12/16 test nổ vì `uq_employee_shifts_person_day`. Nay mỗi test tự tạo nhân viên có mã duy nhất trong một transaction rồi rollback: không để lại rác, và không phụ thuộc thứ tự chạy.
+
+**"Cần xem" mà 74% số dòng đều cần xem thì không ai xem.** `needsReview` ban đầu gộp mọi dòng có cảnh báo, và với dữ liệu thật nó trả về **266/360** — vì engine cảnh báo với MỌI OT > 0, kể cả 9 phút. Sửa hai chỗ: ngưỡng cảnh báo OT thành tham số (`otWarningThresholdMin`, mặc định 60'), và `needsReview` chỉ gồm trạng thái đòi hỏi một QUYẾT ĐỊNH của con người (`MISSING_PUNCH`, `ABSENT`). Kết quả: **8 dòng cần quyết định, 44 dòng có ghi chú** — hai con số, hai nghĩa khác nhau.
 
 **FIRST-IN / LAST-OUT, và vì sao không suy hướng quẹt theo điểm giữa đoạn.** Bản port đầu tiên phân loại quẹt VÀO/RA hoàn toàn theo điểm giữa của đoạn, và nó phá đúng trường hợp phổ biến nhất: người làm 08:00–11:00 rồi về có hai quẹt 480 và 660, điểm giữa đoạn là 750 nên **cả hai đều bị coi là quẹt VÀO**, giờ ra được suy thành 17:00, và 3 giờ làm được tính thành 8 giờ công. Quy tắc đúng: từ hai quẹt trở lên thì lần đầu là VÀO và lần cuối là RA — đó chính là FIRST-IN/LAST-OUT, không cần đoán. Điểm giữa chỉ dùng khi có đúng một quẹt (không còn cách nào khác).
 

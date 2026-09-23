@@ -32,9 +32,11 @@ import {
   boolean,
   check,
   date,
+  doublePrecision,
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   text,
@@ -839,5 +841,300 @@ export const glLines = pgTable(
     // Không cho dòng 0 đồng: nó không đổi số dư nhưng làm rối sổ và khiến
     // "có bao nhiêu dòng" thành một con số vô nghĩa.
     chkAmount: check('chk_gl_lines_amount', sql`${t.amount} > 0`),
+  }),
+);
+
+// ===========================================================================
+// CHẤM CÔNG — quẹt thẻ thô, lịch xếp ca, và công ngày đã tính
+// ===========================================================================
+
+/**
+ * Máy chấm công vật lý.
+ *
+ * Bảng này tồn tại vì `raw_punches` trỏ vào nó bằng KHOÁ NGOẠI: một quẹt từ
+ * serial không có trong bảng này thì KHÔNG ghi được. Đó là ranh giới tin cậy —
+ * nếu quẹt thẻ chỉ là một cột text tự do thì bất kỳ ai có quyền ghi DB cũng tạo
+ * được công cho bất kỳ ai, và không cách nào phân biệt.
+ */
+export const shiftDevices = pgTable(
+  'shift_devices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Số serial của thiết bị — khoá định danh, không phải id nội bộ. */
+    serial: varchar('serial', { length: 64 }).notNull(),
+    model: varchar('model', { length: 64 }),
+    /**
+     * Giao thức lấy quẹt: HIK_ISAPI (Hikvision), ZK_ADMS (ZKTeco/Ronald Jack đẩy
+     * chủ động), RONALD_TCP (kéo bằng SDK), MOBILE (app + GPS).
+     */
+    protocol: varchar('protocol', { length: 24 }).notNull(),
+    location: varchar('location', { length: 120 }),
+    /** Thiết bị hỏng/thay mới thì tắt, KHÔNG XOÁ — quẹt cũ vẫn phải trỏ về được. */
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uqSerial: unique('uq_shift_devices_serial').on(t.serial),
+    chkProtocol: check(
+      'chk_shift_devices_protocol',
+      sql`${t.protocol} IN ('HIK_ISAPI','ZK_ADMS','RONALD_TCP','MOBILE','MANUAL')`,
+    ),
+  }),
+);
+
+/**
+ * QUẸT THẺ THÔ — nhật ký sự kiện, CHỈ THÊM, KHÔNG SỬA, KHÔNG XOÁ.
+ *
+ * Đây là BẰNG CHỨNG. Mọi con số trong `daily_attendance` đều suy ra được từ
+ * bảng này cộng với lịch và chính sách; nếu ngày công tính sai thì tính lại từ
+ * đây. Ngược lại thì không: sửa/xoá một quẹt là mất khả năng giải trình với
+ * người lao động — "máy chấm công ghi tôi quẹt lúc 7:58 mà" là loại tranh chấp
+ * xảy ra hàng tháng.
+ *
+ * `UNIQUE (employee_code, device_serial, punched_at)` để import lại bao nhiêu lần
+ * cũng không nhân đôi quẹt — thiết bị Ronald Jack đẩy lại cả lô khi mất mạng là
+ * chuyện bình thường, và một quẹt bị đếm hai lần sẽ thành "đi trễ" oan.
+ */
+export const rawPunches = pgTable(
+  'raw_punches',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    employeeCode: varchar('employee_code', { length: 32 })
+      .notNull()
+      // RESTRICT chứ không CASCADE: xoá nhân viên KHÔNG được kéo theo bằng chứng
+      // chấm công của họ. Nghỉ việc thì tắt `employees.active`, không xoá dòng.
+      .references(() => employees.employeeCode, { onDelete: 'restrict' }),
+    deviceSerial: varchar('device_serial', { length: 64 })
+      .notNull()
+      .references(() => shiftDevices.serial, { onDelete: 'restrict' }),
+    /**
+     * Thời điểm quẹt, CÓ MÚI GIỜ. Thiết bị VN đẩy giờ local naive; nếu lưu naive
+     * thì ca đêm vắt 0h sẽ bị lệch khi server đặt ở múi khác — và ca đêm chính là
+     * trường hợp khó nhất của cả hệ thống.
+     */
+    punchedAt: timestamp('punched_at', { withTimezone: true }).notNull(),
+    /** 'IN' / 'OUT' nếu thiết bị khai; null thì engine tự suy. */
+    direction: varchar('direction', { length: 3 }),
+    /** DEVICE = máy quẹt, ADMS = thiết bị đẩy chủ động, MOBILE = app, MANUAL = nhập tay. */
+    source: varchar('source', { length: 16 }).notNull().default('DEVICE'),
+    // Toạ độ chỉ có ý nghĩa với nguồn MOBILE; để null được và kiểm chứng ở service.
+    latitude: doublePrecision('latitude'),
+    longitude: doublePrecision('longitude'),
+    accuracyMeters: integer('accuracy_meters'),
+    /** BSSID của WiFi — chống GPS giả, vì BSSID khó làm giả hơn toạ độ. */
+    bssid: varchar('bssid', { length: 32 }),
+    /** Định danh điện thoại — một người không nên quẹt từ 20 thiết bị khác nhau. */
+    deviceId: varchar('device_id', { length: 120 }),
+    importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    // Import lại không nhân đôi quẹt.
+    uqPunch: unique('uq_raw_punches_once').on(t.employeeCode, t.deviceSerial, t.punchedAt),
+    // Tra theo (nhân viên, khoảng ngày) là truy vấn nóng nhất của hệ thống này.
+    idxEmployeeTime: index('idx_raw_punches_employee_time').on(t.employeeCode, t.punchedAt),
+    idxDeviceTime: index('idx_raw_punches_device_time').on(t.deviceSerial, t.punchedAt),
+    chkDirection: check(
+      'chk_raw_punches_direction',
+      sql`${t.direction} IS NULL OR ${t.direction} IN ('IN','OUT')`,
+    ),
+    chkSource: check(
+      'chk_raw_punches_source',
+      sql`${t.source} IN ('DEVICE','ADMS','MOBILE','MANUAL')`,
+    ),
+    // Toạ độ hợp lệ. Một cặp (999, 999) lọt vào thì phép tính Haversine vẫn chạy
+    // và vẫn trả về một con số — chỉ là con số vô nghĩa.
+    chkCoords: check(
+      'chk_raw_punches_coords',
+      sql`${t.latitude} IS NULL OR (${t.latitude} BETWEEN -90 AND 90 AND ${t.longitude} BETWEEN -180 AND 180)`,
+    ),
+    chkAccuracy: check(
+      'chk_raw_punches_accuracy',
+      sql`${t.accuracyMeters} IS NULL OR ${t.accuracyMeters} > 0`,
+    ),
+  }),
+);
+
+/**
+ * LỊCH XẾP CA — ai làm ca nào, ngày nào.
+ *
+ * Hai cách khai, không dùng lẫn:
+ *   • Ca CỐ ĐỊNH: chỉ cần `shiftCode` (HC, CA1, CA2, CA3, REST).
+ *   • Ca XOAY: khai `rotationCode` + `anchorDate` + `teamIndex`, engine tự tính
+ *     ca của ngày đó. Không lưu sẵn ca ra 982 dòng vì lịch 30 ngày × 36 người là
+ *     dữ liệu lặp, và đổi hệ xoay (từ 3 ca sang 4 ca) sẽ phải sửa lại hết.
+ *
+ * `UNIQUE (employee_code, work_date)`: một người không thể có hai ca một ngày.
+ * Nghe hiển nhiên, nhưng thiếu ràng buộc này thì một lần import trùng sẽ tạo hai
+ * dòng và engine phải chọn — chọn sai là trả lương sai.
+ */
+export const employeeShifts = pgTable(
+  'employee_shifts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    employeeCode: varchar('employee_code', { length: 32 })
+      .notNull()
+      .references(() => employees.employeeCode, { onDelete: 'cascade' }),
+    workDate: date('work_date').notNull(),
+    /** Mã ca của policy kind SHIFT, hoặc 'REST' khi nghỉ. Null khi dùng ca xoay. */
+    shiftCode: varchar('shift_code', { length: 32 }),
+    /** Mã hệ xoay (policy kind SHIFT_ROTATION) — khai thì engine tự suy ca. */
+    rotationCode: varchar('rotation_code', { length: 32 }),
+    /** Ngày neo của chu kỳ xoay — thiếu nó thì "ngày thứ mấy trong chu kỳ" vô nghĩa. */
+    anchorDate: date('anchor_date'),
+    /** Đội/kíp 0..n-1 — mỗi đội lệch pha một bước trong chu kỳ. */
+    teamIndex: integer('team_index'),
+    /** Lý do đặc biệt: nghỉ phép, công tác, nghỉ không lương… */
+    leaveKind: varchar('leave_kind', { length: 32 }),
+    note: varchar('note', { length: 240 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uqPersonDay: unique('uq_employee_shifts_person_day').on(t.employeeCode, t.workDate),
+    idxDate: index('idx_employee_shifts_date').on(t.workDate),
+    // Đúng MỘT trong hai cách khai. Khai cả hai thì engine phải chọn, và chọn sai
+    // là trả lương sai; không khai cái nào thì ngày đó không biết tính gì.
+    chkOneMode: check(
+      'chk_employee_shifts_one_mode',
+      sql`(${t.shiftCode} IS NULL) <> (${t.rotationCode} IS NULL)`,
+    ),
+    // Ca xoay bắt buộc phải có ngày neo và số đội.
+    chkRotation: check(
+      'chk_employee_shifts_rotation',
+      sql`${t.rotationCode} IS NULL OR (${t.anchorDate} IS NOT NULL AND ${t.teamIndex} IS NOT NULL)`,
+    ),
+    chkTeamIndex: check('chk_employee_shifts_team', sql`${t.teamIndex} IS NULL OR ${t.teamIndex} >= 0`),
+    chkDate: check(
+      'chk_employee_shifts_date',
+      sql`${t.workDate} BETWEEN '2000-01-01' AND '2100-01-01'`,
+    ),
+  }),
+);
+
+/**
+ * LỊCH NGHỈ LỄ — nguồn của hệ số OT 300%.
+ *
+ * Tách riêng khỏi lịch xếp ca vì ngày lễ là sự thật CỦA CẢ NƯỚC, không phải của
+ * từng nhân viên: lặp nó vào từng dòng lịch là cùng một sự thật được ghi 36 lần
+ * mỗi ngày lễ, và sửa thiếu một chỗ là một người bị tính OT sai hệ số.
+ */
+export const publicHolidays = pgTable(
+  'public_holidays',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    holidayDate: date('holiday_date').notNull(),
+    nameVi: varchar('name_vi', { length: 160 }).notNull(),
+    /** Nguồn pháp lý, ví dụ 'Điều 112 BLLĐ 2019'. */
+    legalRef: varchar('legal_ref', { length: 160 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uqDate: unique('uq_public_holidays_date').on(t.holidayDate),
+    idxDate: index('idx_public_holidays_date').on(t.holidayDate),
+    chkDate: check(
+      'chk_public_holidays_date',
+      sql`${t.holidayDate} BETWEEN '2000-01-01' AND '2100-01-01'`,
+    ),
+  }),
+);
+
+/**
+ * CÔNG NGÀY — bảng DẪN XUẤT, tính lại được từ quẹt thô + lịch + chính sách.
+ *
+ * Vì nó dẫn xuất nên hai điều sau là bắt buộc, không phải tuỳ chọn:
+ *   1. TÍNH LẠI PHẢI CHO ĐÚNG KẾT QUẢ CŨ nếu đầu vào không đổi — nên mọi đầu vào
+ *      đã dùng đều được ghi lại (`shiftPolicyVersionId`, `pairingConfig`).
+ *   2. KHÔNG ĐƯỢC là nguồn sự thật duy nhất. Bảng nguồn sự thật là `raw_punches`.
+ *      Nếu một ngày bảng này và quẹt thô mâu thuẫn, quẹt thô thắng.
+ *
+ * Mọi con số lưu theo PHÚT (số nguyên). Giờ và hệ số ngày công suy ra lúc hiển
+ * thị. Lưu giờ dạng float thì cộng 30 ngày sẽ lệch, và khoản lệch đó nằm đúng
+ * vào lương.
+ */
+export const dailyAttendance = pgTable(
+  'daily_attendance',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    employeeCode: varchar('employee_code', { length: 32 })
+      .notNull()
+      .references(() => employees.employeeCode, { onDelete: 'cascade' }),
+    workDate: date('work_date').notNull(),
+    /** Mã ca ĐÃ RESOLVE (ca xoay đã được tính ra ca cụ thể của ngày đó). */
+    shiftCode: varchar('shift_code', { length: 32 }).notNull(),
+    /** Phiên bản định nghĩa ca đã dùng — để giải trình "vì sao tính ra số này". */
+    shiftPolicyVersionId: uuid('shift_policy_version_id'),
+    dayKind: varchar('day_kind', { length: 16 }).notNull(),
+    status: varchar('status', { length: 24 }).notNull(),
+
+    workedMinutes: integer('worked_minutes').notNull().default(0),
+    /**
+     * Ngày công quy chuẩn (0..1+) — lương trả theo cái này, không theo giờ thô.
+     *
+     * `numeric` chứ không phải float: 0.1 ngày công cộng 30 lần bằng float sẽ lệch,
+     * và khoản lệch đó nằm đúng vào lương. Drizzle trả kiểu `string` cho numeric
+     * (bản 0.36 không có `mode: 'number'`), nên service phải `Number()` khi đọc —
+     * cố ý để chỗ chuyển đổi là DUY NHẤT một chỗ, không rải khắp.
+     */
+    standardDays: numeric('standard_days', { precision: 8, scale: 3 }).notNull().default('0'),
+    nightMinutes: integer('night_minutes').notNull().default(0),
+    lateMinutes: integer('late_minutes').notNull().default(0),
+    earlyLeaveMinutes: integer('early_leave_minutes').notNull().default(0),
+    absentMinutes: integer('absent_minutes').notNull().default(0),
+    // OT tách theo loại ngày vì Điều 98 BLLĐ cho ba hệ số khác nhau 150/200/300%.
+    // Gộp chung một cột thì không còn cách nào tính đúng hệ số về sau.
+    otWeekdayMinutes: integer('ot_weekday_minutes').notNull().default(0),
+    otWeekendMinutes: integer('ot_weekend_minutes').notNull().default(0),
+    otHolidayMinutes: integer('ot_holiday_minutes').notNull().default(0),
+    /** Phần OT rơi vào khung đêm — được CỘNG THÊM theo Điều 98, không thay thế. */
+    otNightMinutes: integer('ot_night_minutes').notNull().default(0),
+    regularizedMinutes: integer('regularized_minutes').notNull().default(0),
+    punchCount: integer('punch_count').notNull().default(0),
+    checkInAt: timestamp('check_in_at', { withTimezone: true }),
+    checkOutAt: timestamp('check_out_at', { withTimezone: true }),
+
+    /** Chi tiết từng đoạn (giờ vào/ra thật và kế hoạch, nguồn của mỗi giờ). */
+    segments: jsonb('segments').$type<unknown[]>().notNull().default([]),
+    /** Quẹt bị loại vì ngoài cửa sổ — giữ lại để HR biết có chuyện gì. */
+    rejectedPunches: jsonb('rejected_punches').$type<number[]>().notNull().default([]),
+    warnings: jsonb('warnings').$type<string[]>().notNull().default([]),
+    /** Tham số ghép cặp đã dùng — đổi ngưỡng sau này không được đổi số cũ. */
+    pairingConfig: jsonb('pairing_config').$type<Record<string, number>>().notNull().default({}),
+    computedAt: timestamp('computed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uqPersonDay: unique('uq_daily_attendance_person_day').on(t.employeeCode, t.workDate),
+    idxDate: index('idx_daily_attendance_date').on(t.workDate),
+    idxStatus: index('idx_daily_attendance_status').on(t.status),
+    // Tháng lương chốt theo (work_date) nên đây là chỉ mục của truy vấn lương.
+    //
+    // `::timestamp` là BẮT BUỘC, không phải trang trí. `date_trunc(text, date)`
+    // được PostgreSQL resolve sang overload nhận `timestamptz`, và overload đó là
+    // STABLE (kết quả phụ thuộc setting timezone) nên bị từ chối: "functions in
+    // index expression must be marked IMMUTABLE". Ép kiểu tường minh thì chọn đúng
+    // overload IMMUTABLE.
+    idxMonth: index('idx_daily_attendance_month').on(
+      sql`date_trunc('month', ${t.workDate}::timestamp)`,
+    ),
+    chkDayKind: check(
+      'chk_daily_attendance_day_kind',
+      sql`${t.dayKind} IN ('WORKING_DAY','WEEKLY_REST','PUBLIC_HOLIDAY','PAID_LEAVE')`,
+    ),
+    chkStatus: check(
+      'chk_daily_attendance_status',
+      sql`${t.status} IN ('PRESENT','LATE','HALF_DAY','ABSENT','MISSING_PUNCH','WEEKLY_OFF','HOLIDAY_OFF','LEAVE_PAID')`,
+    ),
+    // Giờ công không âm. Một con số âm lọt vào thì cả tháng lương lệch mà không
+    // có dòng nào báo lỗi.
+    chkNonNegative: check(
+      'chk_daily_attendance_non_negative',
+      sql`${t.workedMinutes} >= 0 AND ${t.nightMinutes} >= 0 AND ${t.lateMinutes} >= 0
+           AND ${t.earlyLeaveMinutes} >= 0 AND ${t.absentMinutes} >= 0
+           AND ${t.otWeekdayMinutes} >= 0 AND ${t.otWeekendMinutes} >= 0
+           AND ${t.otHolidayMinutes} >= 0 AND ${t.otNightMinutes} >= 0
+           AND ${t.regularizedMinutes} >= 0 AND ${t.punchCount} >= 0`,
+    ),
+    // Giờ đêm không thể nhiều hơn giờ làm: đêm là TẬP CON của khoảng đã làm.
+    chkNightSubset: check('chk_daily_attendance_night', sql`${t.nightMinutes} <= ${t.workedMinutes}`),
+    chkStandardDays: check('chk_daily_attendance_days', sql`${t.standardDays} >= 0`),
   }),
 );

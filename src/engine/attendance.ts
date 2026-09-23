@@ -77,6 +77,16 @@ export interface PairingConfig {
   halfDayWorkedRatio: number;
   /** OT vượt số giờ này trong ngày thì cảnh báo giới hạn 40h/tháng (Điều 107) */
   dailyOtWarningHours: number;
+  /**
+   * Chỉ cảnh báo khi OT trong ngày đạt mức này (phút).
+   *
+   * Bản gốc cảnh báo với MỌI OT > 0, và với dữ liệu thật thì 266/360 ngày có
+   * cảnh báo — phần lớn là "phát sinh 0.15h làm thêm", tức 9 phút. Một danh sách
+   * mà ba phần tư số dòng đều "cần xem" thì không ai xem, và dòng thật sự cần xem
+   * sẽ chìm trong đó. OT vẫn được TÍNH và LƯU đầy đủ ở các cột riêng; cái bị bỏ
+   * chỉ là dòng thông báo không đòi hỏi ai làm gì.
+   */
+  otWarningThresholdMin: number;
 }
 
 export const DEFAULT_PAIRING_CONFIG: PairingConfig = {
@@ -89,6 +99,7 @@ export const DEFAULT_PAIRING_CONFIG: PairingConfig = {
   standardDayHours: 8,
   halfDayWorkedRatio: 0.5,
   dailyOtWarningHours: 4,
+  otWarningThresholdMin: 60,
 };
 
 export type PunchSource = 'PUNCH' | 'REGULARIZATION' | 'INFERRED' | null;
@@ -144,6 +155,35 @@ export interface AttendanceResult {
   warnings: string[];
   /** Quẹt bị loại vì ngoài cửa sổ ghép cặp */
   rejectedPunches: number[];
+}
+
+/**
+ * Các khoảng KHÔNG phải giờ làm của một ca, trong hệ phút tuyệt đối.
+ *
+ * Gồm hai loại: khe hở GIỮA các đoạn (ca gãy 08:00–12:00 + 14:00–18:00 có 120
+ * phút ở giữa không ai trả) và khung giờ nghỉ trong từng đoạn.
+ *
+ * Cần cho nhánh ngày nghỉ/ngày lễ, nơi giờ làm được lấy theo khoảng bao từ quẹt
+ * đầu đến quẹt cuối. Nếu không trừ hai loại khoảng này thì ca gãy đi làm ngày lễ
+ * được tính 600 phút OT thay vì 480 — và ở hệ số 300% thì 120 phút đó là tiền
+ * thật trả cho hai tiếng người ta không làm.
+ */
+function nonWorkedIntervals(
+  shift: ResolvedShift,
+): { lo: number; hi: number }[] {
+  const out: { lo: number; hi: number }[] = [];
+  const segs = [...shift.segments].sort((a, b) => a.absStart - b.absStart);
+  for (let i = 0; i + 1 < segs.length; i++) {
+    const gapLo = segs[i]!.absEnd;
+    const gapHi = segs[i + 1]!.absStart;
+    if (gapHi > gapLo) out.push({ lo: gapLo, hi: gapHi });
+  }
+  for (const sg of segs) {
+    if (sg.breakAbsStart !== null && sg.breakAbsEnd !== null && sg.breakAbsEnd > sg.breakAbsStart) {
+      out.push({ lo: sg.breakAbsStart, hi: sg.breakAbsEnd });
+    }
+  }
+  return out;
 }
 
 /** Điểm giữa của một đoạn — ranh giới phân loại IN / OUT khi thiết bị không khai. */
@@ -508,7 +548,7 @@ function computeOvertime(
     else res.weekday += len;
   }
 
-  if (totalOt > 0) {
+  if (totalOt >= cfg.otWarningThresholdMin) {
     const label = dayKind === 'PUBLIC_HOLIDAY' ? '300%' : dayKind === 'WEEKLY_REST' ? '200%' : '150%';
     warnings.push(`Phát sinh ${(totalOt / 60).toFixed(2)}h làm thêm (hệ số ${label})`);
   }
@@ -566,10 +606,18 @@ function buildRestDayResult(
   const ins = [...inWin].sort((a, b) => a.absMinute - b.absMinute);
   const firstIn = ins[0]!;
   const lastOut = ins[ins.length - 1]!;
-  const worked = Math.max(0, lastOut.absMinute - firstIn.absMinute);
+  const spanLo = firstIn.absMinute;
+  const spanHi = lastOut.absMinute;
+  // Trừ khe giữa các đoạn và khung giờ nghỉ. Ca tổng hợp (ngày không xếp ca) chỉ
+  // có một đoạn và không có giờ nghỉ nên không bị trừ gì — đúng như mong đợi.
+  let worked = Math.max(0, spanHi - spanLo);
+  for (const iv of nonWorkedIntervals(shift)) {
+    worked -= overlapMinutes(spanLo, spanHi, iv.lo, iv.hi);
+  }
+  worked = Math.max(0, worked);
   const night = nightOverlapMinutes(
-    firstIn.absMinute,
-    lastOut.absMinute,
+    spanLo,
+    spanHi,
     shift.nightStartMin,
     shift.nightEndMin,
   );

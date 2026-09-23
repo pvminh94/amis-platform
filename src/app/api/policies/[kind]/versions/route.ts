@@ -9,6 +9,7 @@ import { printParamsSchema, printJsonSchema } from '@/policy/print-params';
 import { reportParamsSchema, reportJsonSchema } from '@/policy/report-params';
 import { glMapParamsSchema, glMapJsonSchema } from '@/policy/gl-params';
 import { shiftParamsSchema, shiftJsonSchema } from '@/policy/shift-params';
+import { rotationParamsSchema, rotationJsonSchema } from '@/policy/rotation-params';
 import { ensureKind } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
@@ -95,7 +96,16 @@ const VALIDATORS: Record<
     nameVi: 'Định nghĩa ca làm việc',
     schema: shiftParamsSchema,
     json: shiftJsonSchema,
-     exclusiveByCode: true,
+    exclusiveByCode: true,
+  },
+  // Loại thứ MƯỜI. Vẫn chỉ một dòng: không có trang nào được viết riêng cho
+  // ROT_3CA4KIP — form sinh từ rotationJsonSchema, validate bằng đúng bộ luật
+  // của engine (validateRotation).
+  SHIFT_ROTATION: {
+    nameVi: 'Hệ xoay ca',
+    schema: rotationParamsSchema,
+    json: rotationJsonSchema,
+    exclusiveByCode: true,
   },
 };
 

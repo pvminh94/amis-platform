@@ -1,0 +1,2 @@
+ALTER TABLE "daily_attendance" DROP CONSTRAINT IF EXISTS "chk_daily_attendance_status";--> statement-breakpoint
+ALTER TABLE "daily_attendance" ADD CONSTRAINT "chk_daily_attendance_status" CHECK ("daily_attendance"."status" IN ('PRESENT','LATE','HALF_DAY','ABSENT','MISSING_PUNCH','WEEKLY_OFF','HOLIDAY_OFF','LEAVE_PAID'));

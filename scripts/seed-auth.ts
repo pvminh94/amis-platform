@@ -46,6 +46,8 @@ const PERMISSIONS = [
   ['user:manage', 'Quản trị người dùng và vai trò'],
   ['gl:read', 'Xem sổ cái'],
   ['gl:post', 'Ghi sổ cái từ bảng lương'],
+  ['attendance:read', 'Xem chấm công'],
+  ['attendance:compute', 'Tính lại công ngày'],
 ] as const;
 
 // --- Vai trò ---------------------------------------------------------------
@@ -63,6 +65,7 @@ const ROLES = [
     perms: [
       'policy:read', 'policy:write', 'payroll:read', 'payroll:run', 'payroll:submit',
       'report:read', 'report:write', 'print:read', 'print:write', 'employee:read', 'employee:write',
+      'attendance:read', 'attendance:compute',
     ],
   },
   {
@@ -81,13 +84,16 @@ const ROLES = [
     code: 'DEPT_HEAD',
     nameVi: 'Trưởng phòng',
     isSystem: false,
-    perms: ['payroll:read', 'approval:act', 'report:read', 'employee:read'],
+    perms: ['payroll:read', 'approval:act', 'report:read', 'employee:read', 'attendance:read'],
   },
   {
     code: 'EMPLOYEE',
     nameVi: 'Nhân viên',
     isSystem: false,
-    perms: ['print:read'],
+    // Nhân viên xem được chấm công CỦA MÌNH — phạm vi dữ liệu SELF chặn phần còn
+    // lại. Không cho xem thì mỗi tháng lại có một loạt email hỏi "sao em bị trừ
+    // ngày này", và nhân sự phải tra tay từng người.
+    perms: ['print:read', 'attendance:read'],
   },
 ] as const;
 

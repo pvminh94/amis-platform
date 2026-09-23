@@ -18,7 +18,7 @@ import {
   type ShiftDef,
   type RotationDef,
 } from '../src/engine/shift';
-import { parseTimeOfDay, formatTimeOfDay, toLocalMoment, diffDays } from '../src/engine/time';
+import { parseTimeOfDay, formatTimeOfDay, toLocalMoment, diffDays, addDays as addDaysLocal } from '../src/engine/time';
 
 const D = '2026-09-15'; // Thứ ba
 
@@ -617,5 +617,109 @@ describe('policy kind SHIFT', () => {
     });
     expect(parsed.segments[0]!.endDayOffset).toBeUndefined();
     expect(parsed.segments[0]!.breakMinutes).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Loại chính sách SHIFT_ROTATION — hệ xoay ca cũng là DỮ LIỆU
+// ---------------------------------------------------------------------------
+
+import {
+  rotationParamsSchema,
+  rotationJsonSchema,
+  SEED_ROTATIONS_VN,
+} from '../src/policy/rotation-params';
+
+describe('policy kind SHIFT_ROTATION', () => {
+  const base = { ...SEED_ROTATIONS_VN[0]! };
+
+  it('JSON Schema và Zod schema cùng tập trường và cùng danh sách bắt buộc', () => {
+    const { jsonFields } = expectSchemasAgree(rotationJsonSchema, rotationParamsSchema);
+    expect(jsonFields).toContain('pattern');
+    expect(jsonFields).toContain('cycleLength');
+  });
+
+  it('mọi hệ xoay seed đều hợp lệ', () => {
+    for (const r of SEED_ROTATIONS_VN) {
+      const p = rotationParamsSchema.safeParse(r);
+      expect(p.success, `${r.regimeCode}: ${JSON.stringify(p.error?.issues ?? [])}`).toBe(true);
+    }
+  });
+
+  it('pattern ngắn hơn cycleLength → bị từ chối bằng đúng thông điệp của engine', () => {
+    // Đây là lỗi nguy hiểm nhất của hệ xoay: mỗi chu kỳ trôi qua là lịch lệch
+    // thêm một ngày, cho tới khi có người làm hai ca đêm liền.
+    const r = rotationParamsSchema.safeParse({ ...base, pattern: ['CA1', 'CA2', 'CA3'] });
+    expect(r.success).toBe(false);
+    expect(JSON.stringify(r.error?.issues)).toMatch(/pattern có 3 phần tử nhưng cycleLength = 8/);
+  });
+
+  it('pattern dài hơn cycleLength → cũng bị từ chối', () => {
+    const r = rotationParamsSchema.safeParse({ ...base, cycleLength: 4 });
+    expect(r.success).toBe(false);
+  });
+
+  it('phần tử pattern rỗng → bị từ chối', () => {
+    const r = rotationParamsSchema.safeParse({ ...base, pattern: [...base.pattern.slice(0, 7), ''] });
+    expect(r.success).toBe(false);
+  });
+
+  it('phaseStep âm → bị từ chối', () => {
+    expect(rotationParamsSchema.safeParse({ ...base, phaseStep: -1 }).success).toBe(false);
+  });
+
+  it('teamCount = 0 → bị từ chối', () => {
+    expect(rotationParamsSchema.safeParse({ ...base, teamCount: 0 }).success).toBe(false);
+  });
+
+  it('mã ca trong pattern phải là một ca có thật hoặc mã nghỉ', () => {
+    // Bất biến chéo giữa hai loại chính sách: một hệ xoay trỏ tới mã ca không tồn
+    // tại thì lịch xếp được nhưng ngày đó không tính được công.
+    const known = new Set(SEED_SHIFTS_VN.map((s) => s.regimeCode));
+    for (const r of SEED_ROTATIONS_VN) {
+      const rest = r.restCode ?? 'REST';
+      for (const code of r.pattern) {
+        expect(known.has(code) || code === rest, `${r.regimeCode}: mã lạ "${code}"`).toBe(true);
+      }
+    }
+  });
+
+  it('hệ xoay 4 kíp chu kỳ 8: mỗi ngày đúng 3 kíp làm và 1 kíp nghỉ', () => {
+    // Bất biến này quan trọng hơn bất kỳ con số cụ thể nào: nếu nó vỡ thì hoặc
+    // có ngày không ai trực, hoặc có ngày hai kíp trùng ca và một kíp nghỉ oan.
+    const rot = {
+      code: base.regimeCode,
+      name: base.regimeLabel,
+      cycleLength: base.cycleLength,
+      pattern: base.pattern,
+      restCode: base.restCode,
+      phaseStep: base.phaseStep,
+      teamCount: base.teamCount,
+    };
+    for (let i = 0; i < 40; i++) {
+      const day = addDaysLocal(D, i);
+      const counts = new Map<string, number>();
+      for (let t = 0; t < rot.teamCount!; t++) {
+        const code = resolveRotationShiftCode(day, D, t, rot) ?? 'REST';
+        counts.set(code, (counts.get(code) ?? 0) + 1);
+      }
+      expect(counts.get('CA1')).toBe(1);
+      expect(counts.get('CA2')).toBe(1);
+      expect(counts.get('CA3')).toBe(1);
+      expect(counts.get('REST')).toBe(1);
+    }
+  });
+
+  it('tham số không có .default() — trường trống phải là lỗi, không phải giá trị ngầm', () => {
+    // Đã trả giá cho cái này ở bộ tham số thuế: một trường số để trống gửi lên
+    // thành 0, và "0" với "không khai" là hai ý hoàn toàn khác nhau.
+    const shape = (rotationParamsSchema as unknown as {
+      _def: { schema: { shape: Record<string, { isOptional: () => boolean }> } };
+    })._def.schema.shape;
+    for (const [k, v] of Object.entries(shape)) {
+      expect(v.isOptional(), `${k} phải bắt buộc hoặc .optional(), không được .default()`).toBe(
+        ['restCode', 'phaseStep', 'teamCount'].includes(k) ? true : false,
+      );
+    }
   });
 });
