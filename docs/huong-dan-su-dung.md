@@ -1,6 +1,6 @@
 # HƯỚNG DẪN SỬ DỤNG AMIS PLATFORM — từng bước
 
-> Cập nhật lần cuối: 23/09/2026 · commit `31f32d4` · 26 commit · 824 test
+> Cập nhật lần cuối: 23/09/2026 · commit `7049f55` · 27 commit · 824 test · **đã đẩy lên GitHub**
 >
 > **Mọi lệnh trong tài liệu này đã được chạy thật và ghi lại kết quả.** Chỗ nào
 > chưa kiểm chứng được trong môi trường hiện tại đều ghi rõ là **CHƯA KIỂM
@@ -19,7 +19,7 @@
 7. [Đổi luật mà không cần sửa code](#7-đổi-luật-mà-không-cần-sửa-code)
 8. [Nối máy chấm công](#8-nối-máy-chấm-công)
 9. [Chạy bằng Docker](#9-chạy-bằng-docker)
-10. [Đẩy code lên Git](#10-đẩy-code-lên-git)
+10. [Đẩy code lên Git](#10-đẩy-code-lên-git) — ✅ đã xong
 11. [Kiểm tra sức khoẻ hệ thống](#11-kiểm-tra-sức-khoẻ-hệ-thống)
 12. [Những gì CHƯA làm được](#12-những-gì-chưa-làm-được)
 13. [Xử lý sự cố](#13-xử-lý-sự-cố)
@@ -519,73 +519,85 @@ Chi tiết đầy đủ: [`docs/deployment.md`](deployment.md).
 
 ## 10. Đẩy code lên Git
 
-### ⚠️ Trạng thái hiện tại: **CHƯA ĐẨY ĐƯỢC**
-
-Tôi đã thử và **thất bại**. Lý do thật, không phải lỗi mạng:
+### ✅ Đã đẩy xong — 23/09/2026
 
 ```
-$ git remote -v
-(không có gì)
-
-$ git push -u origin main
-fatal: 'origin' does not appear to be a git repository
+To https://github.com/pvminh94/amis-platform.git
+   7e75b13..7049f55  main -> main
 ```
 
-**Nguyên nhân:** file `.git/config` nằm trong danh sách **bị loại khỏi snapshot**
-của môi trường này (cùng nhóm với `.git/credentials`, `.netrc` — vì chứa thông
-tin nhạy cảm). Nên định nghĩa remote **mất sau mỗi lần môi trường khởi động lại**,
-và trong sandbox cũng **không có credential** nào của bạn.
+**Repo:** <https://github.com/pvminh94/amis-platform> (private)
 
-Tôi **không** thể tự đẩy. Bạn cần chạy ở máy mình.
+**Đã kiểm chứng bằng cách hỏi thẳng GitHub API**, không chỉ tin output của git:
 
-### Cách 1 — bạn có sẵn repo trên máy
+| Kiểm tra | Kết quả |
+|---|---|
+| HEAD trên remote | `7049f55` — **bằng** local HEAD |
+| Số commit | remote **27** = local **27** |
+| `docs/huong-dan-su-dung.md` | HTTP **200** |
+| `src/lib/page-auth.ts` | HTTP **200** |
+| `.env` | HTTP **404** — đúng, secret không bị đẩy lên |
+
+Đây là **fast-forward thật**, không phải force push: remote trước đó ở `7e75b13`
+(một commit cũ của chính lịch sử này), và đã xác nhận bằng
+`git merge-base --is-ancestor origin/main HEAD` trước khi đẩy. Không mất commit nào.
+
+> **Lưu ý về môi trường sandbox:** `.git/config` nằm trong nhóm file **bị loại
+> khỏi snapshot** (cùng `.git/credentials`, `.netrc` — vì chứa thông tin nhạy cảm).
+> Nên remote đã cấu hình **sẽ mất** khi môi trường khởi động lại, và lần sau phải
+> cấu hình lại. Đây là lý do ở các phiên trước lệnh push thất bại với
+> `'origin' does not appear to be a git repository`.
+
+### Cấu hình lại remote ở môi trường mới
 
 ```bash
 cd amis-platform
 git remote add origin https://github.com/pvminh94/amis-platform.git
-git push -u origin main
+git push -u origin main          # sẽ hỏi credential
 ```
 
-> Tôi đã gắn sẵn remote trỏ tới `pvminh94/amis-platform` (địa chỉ lấy từ ngữ cảnh
-> các phiên trước). **Hãy kiểm tra lại** trước khi push:
-> ```bash
-> git remote -v
-> git remote set-url origin <địa-chỉ-đúng>   # nếu sai
-> ```
+Hoặc clone từ máy bạn:
 
-### Cách 2 — dùng bundle (tôi đã tạo sẵn)
-
-Vì không push được, tôi đóng gói **toàn bộ lịch sử** vào một file để bạn không
-mất việc:
-
-```
-/home/user/amis-platform-full.bundle      626 KB
+```bash
+git clone https://github.com/pvminh94/amis-platform.git
 ```
 
-**Đã kiểm chứng bằng cách clone thật:**
+### Về credential
+
+Push lần này dùng một personal access token **được dán trực tiếp vào hội thoại**.
+Token đó đã được **gỡ khỏi `.git/config`** ngay sau khi push, và đã quét xác nhận:
 
 ```
-clone thật: 26 commit | nhánh main | HEAD 31f32d4
+file trong repo chứa token:      0
+bundle chứa token:               0
+số lần xuất hiện trong lịch sử git: 0
 ```
 
-Ở máy bạn:
+> ⚠️ **Nhưng token đã nằm trong lịch sử hội thoại.** Hãy **thu hồi nó** ở
+> <https://github.com/settings/tokens> và tạo token mới khi cần. Đừng dùng lại.
+>
+> Nguyên tắc cho lần sau: đừng dán token vào chat. Cấu hình credential helper ở
+> máy bạn (`git config --global credential.helper store` hoặc dùng SSH key), rồi
+> push từ đó.
+
+### Bundle dự phòng
+
+Vẫn giữ `/home/user/amis-platform-full.bundle` (641 KB, 27 commit, nhánh `main`)
+phòng khi cần chuyển lịch sử sang máy khác mà không qua mạng:
 
 ```bash
 git clone amis-platform-full.bundle amis-platform
-cd amis-platform
-git remote add origin https://github.com/pvminh94/amis-platform.git
-git push -u origin main
 ```
 
-### Lịch sử 26 commit
+### Lịch sử 27 commit (mới nhất trước)
 
 ```
+7049f55 docs: hướng dẫn sử dụng từng bước + đánh giá trung thực mức dùng được
 31f32d4 fix(security): khoá 6 API route không có kiểm tra quyền
 43f968e fix(security): bảo vệ các trang RSC
 36dbd38 feat(17): parser giao thức thiết bị — ADMS + Hikvision ISAPI
 6f56d6d Phase 16: geofence + liveness
-c37c173 Phase 15
-… (26 commit tổng cộng)
+… (27 commit tổng cộng)
 ```
 
 ---
