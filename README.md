@@ -1,0 +1,183 @@
+# AMIS Platform
+
+Nền tảng ERP tự xây (Next.js + Drizzle + PostgreSQL), thiết kế để **nghiệp vụ thay đổi được qua giao diện mà không cần sửa code**.
+
+---
+
+## Vấn đề cần giải quyết
+
+Luật thuế và BHXH Việt Nam đổi liên tục:
+
+| Thay đổi | Văn bản | Hiệu lực |
+|---|---|---|
+| Giảm trừ gia cảnh 11tr/4,4tr → **15,5tr/6,2tr** | NQ 110/2025/UBTVQH15 | 01/01/2026 |
+| Mức tham chiếu 2.340.000 → **2.530.000** | NĐ 161/2026/NĐ-CP | 01/07/2026 |
+| Biểu thuế 7 bậc → **5 bậc** | Luật 109/2025/QH15 | 2026 (ngày còn tranh cãi) |
+| Lương tối thiểu vùng | NĐ 293/2025/NĐ-CP | 01/07/2025 |
+
+Nếu những con số này nằm trong hằng số TypeScript thì mỗi lần luật đổi phải **sửa code → build → test → deploy**. Với khách hàng on-premise còn phải nâng cấp từng máy.
+
+## Giải pháp: tham số là DỮ LIỆU, không phải code
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  GIAO DIỆN (người dùng sửa luật)                            │
+│    form tự sinh từ JSON Schema trong policy_kinds           │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ ghi
+┌──────────────────────▼──────────────────────────────────────┐
+│  PostgreSQL                                                 │
+│    policy_kinds      — loại chính sách + JSON Schema        │
+│    policy_versions   — tham số theo khoảng hiệu lực         │
+│    policy_audit_logs — ai sửa gì, lúc nào, từ IP nào        │
+└──────────────────────┬──────────────────────────────────────┘
+                       │ đọc theo NGÀY của kỳ lương
+┌──────────────────────▼──────────────────────────────────────┐
+│  ENGINE  calculatePit(thuNhap, params)                      │
+│          ▲ params TRUYỀN VÀO, không đọc hằng số             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Luật đổi = thêm một dòng vào `policy_versions`.** Không sửa code, không build, không deploy.
+
+### Ranh giới: cái gì configurable, cái gì không
+
+Đây là chỗ ERPNext/Odoo đi sai — họ làm *mọi thứ* thành metadata, kết quả là lỗi nằm trong DB không trace được, không test được. Nguyên tắc ở đây:
+
+| Ổn định → code thật, type-safe | Hay đổi → config trong DB |
+|---|---|
+| Bất biến kế toán kép (Σ Nợ = Σ Có) | Biểu thuế, bậc, mức giảm trừ |
+| Auth, RBAC, data scope | Tỷ lệ BHXH, mức tham chiếu, trần đóng |
+| Ràng buộc toàn vẹn dữ liệu | Ngưỡng duyệt đơn từ |
+| Giao thức thiết bị chấm công | Thành phần công thức lương |
+| Cấu trúc bút toán GL | Mẫu in, định nghĩa báo cáo |
+
+---
+
+## Ba ràng buộc ép ở TẦNG DATABASE
+
+Không tin application layer. Nếu service có bug, hoặc hai request ghi đồng thời, PostgreSQL vẫn từ chối.
+
+### 1. `EXCLUDE` — chống chồng lấn khoảng hiệu lực
+
+```sql
+EXCLUDE USING gist (
+  kind_code WITH =,
+  daterange(effective_from, effective_to, '[)') WITH &&
+) WHERE (status = 'ACTIVE')
+```
+
+**Nếu thiếu:** một ngày nào đó sẽ tồn tại hai mức thuế cùng áp dụng cho một ngày, engine chọn tuỳ ý, sai tiền thuế mà **không có lỗi nào được ném ra**. Đây là loại lỗi âm thầm nguy hiểm nhất trong hệ thống tiền bạc.
+
+Khoảng dùng `[from, to)` nửa mở — bản kết thúc 30/06 và bản bắt đầu 01/07 **không** bị coi là chồng lấn.
+
+### 2. `CHECK` — khoảng hiệu lực hợp lệ
+
+`effective_to IS NULL OR effective_to > effective_from`
+
+### 3. `CHECK` — bản ACTIVE phải có người duyệt
+
+`status <> 'ACTIVE' OR (approved_by IS NOT NULL AND approved_at IS NOT NULL)`
+
+Không cho kích hoạt "chui" một bộ tham số thuế.
+
+---
+
+## Engine thuế: hai cách tính, luôn đối chiếu
+
+Cơ quan thuế cho phép tính tắt bằng "số trừ nhanh". Nhưng cách tính từng phần và cách tính tắt **phải cho cùng kết quả**. Engine tính cả hai rồi so sánh:
+
+```ts
+const pit             = roundVnd(tax);                              // từng phần
+const pitByQuickFormula = roundVnd(income * rate - quickDeduction); // tính tắt
+quickFormulaMatch: Math.abs(pit - pitByQuickFormula) <= 1
+```
+
+Nếu lệch → bộ tham số trong DB bị nhập sai. Bắt ngay, không để lọt ra phiếu lương.
+
+Zod schema cũng chặn từ lúc nhập: bậc thuế phải tăng dần, thuế suất phải luỹ tiến, **số trừ nhanh phải khớp công thức** (không cho gõ tay một con số tuỳ ý).
+
+---
+
+## Trạng thái hiện tại
+
+### Đã xây
+
+```
+src/db/schema.ts          4 bảng: policy_kinds, policy_versions,
+                              policy_audit_logs, pay_runs
+src/db/extras.sql         EXCLUDE constraint (Drizzle không diễn đạt được)
+src/policy/tax-params.ts  Zod schema + JSON Schema + 3 chế độ thuế seed
+src/policy/registry.ts    ensureKind / createVersion / activateVersion /
+                              resolvePolicy / getAuditTrail
+src/engine/pit.ts         calculateProgressivePit, calculateTaxableIncome
+drizzle/0000_init.sql     migration
+scripts/demo-law-change.ts  demo đổi luật
+```
+
+### Đã kiểm chứng
+
+**Trên PostgreSQL 18.4 thật — không mock.** Lý do: ba ràng buộc quan trọng nhất nằm ở tầng DB, mà mock không thực thi chúng. Test trên mock sẽ xanh trong khi hệ thống thật vẫn cho phép hai mức thuế chồng lấn.
+
+```
+npm run verify
+  ✓ tsc --noEmit        0 lỗi
+  ✓ drizzle-kit migrate áp dụng từ DB trắng
+  ✓ db:extras           EXCLUDE constraint
+  ✓ vitest              45/45 test
+```
+
+Test đáng chú ý:
+
+- Ghi **SQL thô** cố tình vi phạm → DB từ chối (chứng minh ràng buộc ở DB, không phải ở code)
+- Engine `calculatePit(NaN, …)` → **ném lỗi**, không trả 0đ âm thầm
+- Quét 1M → 200M: biểu 5 bậc luôn ≤ biểu 7 bậc (nếu có mức nào ngược lại thì một bộ tham số bị nhập sai)
+- `resolvePolicy` vào khoảng trống → **ném lỗi rõ ràng**, không dùng giá trị mặc định
+
+### Chạy thử
+
+```bash
+cp .env.example .env        # điền DATABASE_URL
+npm install
+npm run db:setup            # migrate + EXCLUDE constraint
+npm run test                # 45 test
+npm run demo                # demo đổi luật
+```
+
+Demo: cùng một nhân viên (gross 45tr, 1 phụ thuộc), bốn kỳ lương:
+
+| Kỳ | Chế độ | Giảm trừ bản thân | Thuế TNCN |
+|---|---|---|---|
+| 2025-09 | LEGACY_7B | 11.000.000 | **3.179.000** |
+| 2026-03 | BRIDGE_2026H1 | 15.500.000 | **1.926.750** |
+| 2026-09 | VN_2026_5B | 15.500.000 | **1.284.500** |
+| 2027-03 | VN_2027_DEMO *(tạo trong demo)* | 20.000.000 | **834.500** |
+
+Bản 2027 được **tạo và kích hoạt ngay trong script** — không sửa một dòng code nào.
+
+---
+
+## Lộ trình
+
+| Phase | Nội dung | Trạng thái |
+|---|---|---|
+| **1** | Policy Registry + engine thuế | ✅ xong, đã kiểm chứng |
+| **2** | Next.js + shadcn UI: trang quản lý chính sách, form tự sinh từ JSON Schema | ⬜ |
+| **3** | Mở rộng loại chính sách: BHXH (tỷ lệ, trần 20×), ngưỡng duyệt, công thức lương | ⬜ |
+| **4** | Workflow designer (React Flow) + rule engine biểu thức | ⬜ |
+| **5** | Report builder + print format (HTML/CSS → PDF) | ⬜ |
+| **6** | Chuyển nghiệp vụ HRM sang platform (Employee, PayRun thành entity có chính sách) | ⬜ |
+
+---
+
+## Ghi chú thiết kế
+
+**Vì sao Drizzle chứ không Prisma.** Prisma sinh kiểu TypeScript **lúc build** từ `schema.prisma`. Thêm một trường nghĩa là sửa schema → migrate → build → deploy — ngược hoàn toàn với tùy biến lúc chạy. Drizzle vẫn type-safe nhưng cho phép query động.
+
+**Vì sao không dùng metadata cho mọi thứ.** Xem bảng "ranh giới" ở trên. Metadata toàn phần khiến hệ thống không debug được: lỗi nằm trong dữ liệu, không nằm trong code, không có stack trace.
+
+**Vì sao `resolvePolicy` ném lỗi thay vì trả mặc định.** Một kỳ lương tính bằng con số không có căn cứ pháp lý nguy hiểm hơn nhiều so với việc dừng lại và báo "chưa cấu hình chính sách cho khoảng này".
+
+**Vì sao `PayRun.policySnapshot` đóng băng tham số.** Ba năm sau cơ quan thuế kiểm tra, hoặc có người vào sửa `policy_versions`, thì phiếu lương cũ vẫn phải tái hiện đúng con số đã tính. Nếu chỉ lưu tham chiếu rồi tra ngược, một lần chỉnh sửa quá khứ sẽ làm sai lệch toàn bộ lịch sử lương.
+
+**Giảm trừ gia cảnh KHÔNG chia theo ngày công.** Người vào làm giữa tháng vẫn được trừ đủ 15,5 triệu. Chia nhỏ theo tỷ lệ ngày là sai luật và làm người lao động nộp thuế oan.
