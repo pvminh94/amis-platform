@@ -818,6 +818,59 @@ Nói thẳng, không giảm nhẹ.
 
 ## 13. Xử lý sự cố
 
+### `db:setup` báo `28P01 password authentication failed`
+
+```
+error: password authentication failed for user "amis"
+  severity: 'FATAL', code: '28P01', file: 'auth.c'
+```
+
+**Đọc mã lỗi trước khi sửa.** `28P01` nghĩa là **kết nối đã tới được
+PostgreSQL** — host, cổng, tên database đều đúng. Chỉ **mật khẩu sai**. Đừng đi
+sửa cổng hay `pg_hba.conf`, không phải chỗ đó.
+
+| Mã lỗi | Nghĩa | Sửa ở đâu |
+|---|---|---|
+| `28P01` | nối được, **mật khẩu sai** | `ALTER USER` + `DATABASE_URL` |
+| `ECONNREFUSED` | **không nối được** | cổng sai, hoặc service chưa chạy |
+| `3D000` | nối được, **không có database** đó | `CREATE DATABASE` |
+| `Can't find meta/_journal.json` | thiếu file migration | `git pull` (đã sửa ở `9d913c9`) |
+
+**Sửa:** đặt mật khẩu **chỉ gồm chữ và số** để tránh hẳn vấn đề URL-encode:
+
+```bash
+sudo -u postgres psql -c "ALTER USER amis WITH PASSWORD 'AmisDb2026x';"
+```
+
+Rồi `DATABASE_URL` trong `.env` phải khớp đúng:
+
+```bash
+DATABASE_URL=postgresql://amis:AmisDb2026x@127.0.0.1:5432/amis_platform
+```
+
+Kiểm tra **trước khi** chạy lại `db:setup`:
+
+```bash
+psql "postgresql://amis:AmisDb2026x@127.0.0.1:5432/amis_platform" -c 'select 1;'
+# ra một dòng có số 1 là được
+```
+
+**Vẫn 28P01?** Xem chuỗi thật trong `.env`, kể cả ký tự ẩn:
+
+```bash
+grep DATABASE_URL .env | cat -A
+```
+
+Dòng đúng phải **kết thúc bằng `$`** ngay sau tên database, không có khoảng trắng:
+
+```
+DATABASE_URL=postgresql://amis:AmisDb2026x@127.0.0.1:5432/amis_platform$
+```
+
+Ba lỗi hay gặp: khoảng trắng quanh dấu `=` hoặc cuối dòng · mật khẩu có ký tự
+`@ : / # %` mà chưa URL-encode · vẫn còn cổng `55555` thay vì `5432` (nhưng cái
+này báo `ECONNREFUSED` chứ không phải `28P01`).
+
 ### `npm run db:setup` báo lỗi kết nối
 
 Kiểm tra `DATABASE_URL` trong `.env`. **Lệnh `tsx` và npm script KHÔNG tự nạp
