@@ -34,9 +34,11 @@
     "seed:attendance": "tsx scripts/seed-attendance.ts",
     "seed:payment": "tsx scripts/seed-payment.ts",
     "demo:payment": "tsx scripts/payment-flow.ts",
-    "seed:policies": "npm run seed:tax && npm run seed:bhxh && npm run seed:salary && npm run seed:approval && npm run seed:print && npm run seed:gl && npm run seed:shift",
+    "seed:policies": "npm run seed:tax && npm run seed:bhxh && npm run seed:salary && npm run seed:approval && npm run seed:print && npm run seed:gl && npm run seed:shift && npm run seed:geofence",
     "seed:tax": "tsx scripts/seed-tax.ts",
-    "seed:employees": "tsx scripts/seed-employees.ts"
+    "seed:employees": "tsx scripts/seed-employees.ts",
+    "seed:geofence": "tsx scripts/seed-geofence.ts",
+    "check:locations": "tsx scripts/check-locations.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",

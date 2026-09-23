@@ -11,6 +11,8 @@ import { glMapParamsSchema, glMapJsonSchema } from '@/policy/gl-params';
 import { shiftParamsSchema, shiftJsonSchema } from '@/policy/shift-params';
 import { rotationParamsSchema, rotationJsonSchema } from '@/policy/rotation-params';
 import { bankPayoutParamsSchema, bankPayoutJsonSchema } from '@/policy/bank-params';
+import { geofenceParamsSchema, geofenceJsonSchema } from '@/policy/geofence-params';
+import { livenessParamsSchema, livenessJsonSchema } from '@/policy/liveness-params';
 import { ensureKind } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
@@ -114,6 +116,24 @@ const VALIDATORS: Record<
     schema: bankPayoutParamsSchema,
     json: bankPayoutJsonSchema,
     exclusiveByCode: true,
+  },
+  // Hai dòng dưới đây là TẤT CẢ những gì tầng API cần cho geofence và chống
+  // giả mạo khuôn mặt. Giao diện /policies/GEOFENCE/new tự sinh form từ JSON
+  // Schema — không có dòng JSX nào viết riêng cho toạ độ hay BSSID.
+  GEOFENCE: {
+    nameVi: 'Vùng chấm công hợp lệ (geofence)',
+    schema: geofenceParamsSchema,
+    json: geofenceJsonSchema,
+    // Mỗi ĐỊA ĐIỂM một hàng rào đang hiệu lực; nhiều địa điểm cùng tồn tại.
+    exclusiveByCode: true,
+  },
+  LIVENESS: {
+    nameVi: 'Ngưỡng chống giả mạo khuôn mặt',
+    schema: livenessParamsSchema,
+    json: livenessJsonSchema,
+    // Chỉ MỘT bộ ngưỡng hiệu lực tại một thời điểm, như biểu thuế: hai bộ cùng
+    // hiệu lực thì không biết một lần chấm công bị đánh giá theo bộ nào.
+    exclusiveByCode: false,
   },
 };
 

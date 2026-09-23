@@ -33,6 +33,73 @@ console.log('\n' + '═'.repeat(78));
 console.log('  TÍNH LƯƠNG HÀNG LOẠT — employee thật, chính sách từ database');
 console.log('═'.repeat(78) + '\n');
 
+// --- 0. Kỳ lương ĐÃ LẬP UỶ NHIỆM CHI thì không được tính lại -----------------
+//
+// Trước đây ở đây là `DELETE FROM pay_runs`. Lệnh đó chạy tốt cho đến Phase 14:
+// khi `bank_payment_batches` ra đời và trỏ vào pay_runs bằng ON DELETE RESTRICT
+// thì nó nổ `23001` — đúng cái bẫy đã ghi trong README: một lệnh DELETE cha sẽ
+// "bắt đầu fail" vào cái ngày bảng con xuất hiện.
+//
+// Nhưng cách sửa KHÔNG phải là xoá luôn uỷ nhiệm chi cho tiện. Một lô thanh toán
+// là chứng từ đã gửi ngân hàng; xoá nó để chạy lại demo là xoá bằng chứng. Nên:
+//   - có lô nào => TỪ CHỐI và nói rõ phải huỷ lô trước
+//   - không có  => xoá payslips (dữ liệu dẫn xuất) và tính lại bình thường
+// Đặt ALLOW_REPAID_PERIOD=true nếu thật sự muốn xoá cả lô (chỉ dùng ở môi trường
+// dev, và nó in cảnh báo).
+const YEAR_CHK = 2026;
+const MONTH_CHK = 9;
+const existing = await db.execute(
+  sql`select r.id, r.status, count(b.id)::int as batches
+      from pay_runs r left join bank_payment_batches b on b.pay_run_id = r.id
+      where r.period_year = ${YEAR_CHK} and r.period_month = ${MONTH_CHK}
+      group by r.id, r.status`,
+);
+const exRows = (existing as unknown as { rows: { id: string; status: string; batches: number }[] }).rows;
+const allBatches = exRows.reduce((a, r) => a + r.batches, 0);
+
+// PHÂN BIỆT theo trạng thái lô, không phải "có lô thì chặn".
+//
+// Bản đầu tiên chặn ngay khi thấy có bất kỳ lô nào. Sai: các lô ở trạng thái DRAFT
+// CHƯA được gửi đi — chúng chỉ là tệp đã sinh ra, và lương đổi thì chúng thành
+// lỗi thời chứ không phải thành gian lận. Chỉ SENT (đã gửi) và RETURNED (ngân
+// hàng trả về) mới là trạng thái mà một con người phải quyết định.
+const paidStates = exRows.filter((r) => r.status === 'SENT' || r.status === 'RETURNED');
+const staleStates = exRows.filter((r) => r.batches > 0 && r.status !== 'SENT' && r.status !== 'RETURNED');
+if (staleStates.length > 0) {
+  console.log(
+    `  ⚠ Kỳ này có ${staleStates.reduce((a, r) => a + r.batches, 0)} lô ở trạng thái ` +
+      `${staleStates.map((r) => r.status).join('/')} — CHƯA gửi ngân hàng, sẽ bị xoá ` +
+      `vì lương sắp tính lại làm chúng lỗi thời.`,
+  );
+  // Xoá ở đây, KHÔNG để cho `DELETE FROM pay_runs` bên dưới tự nổ 23001. Một lỗi
+  // RESTRICT trần trụi không nói được cho người chạy biết chuyện gì đang xảy ra.
+  await db.execute(sql`DELETE FROM bank_payment_batches`);
+}
+const paid = paidStates;
+if (paid.length > 0 && process.env.ALLOW_REPAID_PERIOD !== 'true') {
+  console.error(
+    `\n  ✗ Kỳ ${String(MONTH_CHK).padStart(2, '0')}/${YEAR_CHK} đã có ` +
+      `${paid.reduce((a, r) => a + r.batches, 0)} lô thanh toán ngân hàng ` +
+      `(trạng thái ${paid.map((r) => r.status).join(', ')}).\n` +
+      `    Một lô thanh toán là chứng từ ĐÃ GỬI NGÂN HÀNG. Tính lại lương mà xoá\n` +
+      `    luôn chứng từ đó thì sổ sách không còn đối chiếu được với ngân hàng.\n\n` +
+      `    Cách xử lý đúng: xử lý lô ĐÃ GỬI trước (đối soát với ngân hàng), rồi mới\n` +
+      `    tính lại lương. Chỉ lô ở trạng thái DRAFT/VOID mới được xoá tự động.\n\n` +
+      `    rồi chạy lại lệnh này.\n\n` +
+      `    Nếu đây là môi trường dev và bạn chấp nhận xoá chứng từ:\n` +
+      `      ALLOW_REPAID_PERIOD=true npm run payroll\n`,
+  );
+  process.exit(1);
+}
+if (paid.length > 0) {
+  console.log(
+    `  ⚠ ALLOW_REPAID_PERIOD=true — XOÁ ${paid.reduce((a, r) => a + r.batches, 0)} lô ` +
+      `thanh toán của kỳ ${String(MONTH_CHK).padStart(2, '0')}/${YEAR_CHK}. ` +
+      `KHÔNG làm việc này ở môi trường thật.`,
+  );
+  await db.execute(sql`DELETE FROM bank_payment_batches`);
+}
+
 // --- 1. Nhân viên ---------------------------------------------------------
 await db.execute(sql`DELETE FROM payslips`);
 await db.execute(sql`DELETE FROM pay_runs`);

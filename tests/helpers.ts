@@ -4,19 +4,36 @@
 import type { z } from 'zod';
 
 /**
- * Lấy `shape` của một Zod schema, kể cả khi nó bị bọc.
+ * Lấy `shape` của một Zod schema, kể cả khi nó bị bọc NHIỀU LỚP.
  *
- * Các schema tham số đều kết thúc bằng `.superRefine(...)` để kiểm tra ràng
- * buộc chéo giữa các trường, và `.superRefine` trả về ZodEffects — thứ KHÔNG
- * có `.shape`. Phải unwrap một lớp để lấy ZodObject bên trong.
+ * Các schema tham số đều kết thúc bằng `.superRefine(...)` / `.refine(...)` để
+ * kiểm tra ràng buộc chéo giữa các trường, và mỗi lần gọi trả về một ZodEffects
+ * — thứ KHÔNG có `.shape`.
  *
- * Viết một chỗ duy nhất: nếu nâng cấp Zod mà cấu trúc nội bộ đổi thì chỉ
- * một file này cần sửa.
+ * VÒNG LẶP chứ không unwrap một lớp: bản trước chỉ unwrap một lớp, và GEOFENCE
+ * dùng HAI `.refine()` liên tiếp nên bọc thành ZodEffects(ZodEffects(ZodObject)).
+ * Kết quả là `Object.entries(undefined)` và thông báo "Cannot convert undefined
+ * or null to object" — không nói gì về nguyên nhân thật. Một helper dùng chung
+ * mà chỉ đúng với một độ sâu là cái bẫy cho người thêm ràng buộc thứ hai.
  */
 export function shapeOf(schema: unknown): Record<string, z.ZodTypeAny> {
-  const def = (schema as { _def: { typeName?: string; schema?: unknown } })._def;
-  const target = def.typeName === 'ZodObject' ? schema : def.schema;
-  return (target as { shape: Record<string, z.ZodTypeAny> }).shape;
+  let cur = schema as { _def: { typeName?: string; schema?: unknown }; shape?: unknown };
+  // Giới hạn 20 lớp: đủ cho mọi trường hợp thật, và không treo vô hạn nếu Zod
+  // đổi cấu trúc nội bộ khiến vòng lặp không bao giờ gặp ZodObject.
+  for (let i = 0; i < 20; i += 1) {
+    if (cur._def?.typeName === 'ZodObject') break;
+    const next = cur._def?.schema as typeof cur | undefined;
+    if (!next) {
+      throw new Error(
+        `shapeOf: không tìm thấy ZodObject sau ${i} lớp bọc (typeName cuối = ${cur._def?.typeName})`,
+      );
+    }
+    cur = next;
+  }
+  if (!cur.shape) {
+    throw new Error(`shapeOf: schema không có .shape (typeName = ${cur._def?.typeName})`);
+  }
+  return cur.shape as Record<string, z.ZodTypeAny>;
 }
 
 /** Danh sách trường BẮT BUỘC theo Zod (không optional). */

@@ -194,6 +194,20 @@ scripts/payment-flow.ts     17 kiểm tra QUA HTTP THẬT (route chưa từng ch
 tests/payment.spec.ts       33 test: định dạng file, bỏ dấu, đối chiếu tổng
 tests/payment-service.spec.ts  17 test: ràng buộc DB, máy trạng thái, PostgreSQL thật
 
+src/engine/geofence.ts      ★ Haversine, point-in-polygon, đối soát BSSID
+src/engine/liveness.ts      ★ FFT 2D thật, phổ Moiré, Laplacian, điểm liveness
+src/policy/geofence-params.ts   loại thứ 12: tâm+bán kính HOẶC polygon, BSSID
+src/policy/liveness-params.ts   loại thứ 13: ngưỡng chống ảnh in / phát lại
+src/lib/location.ts         adapter tham số phẳng → đầu vào engine (một chỗ duy nhất)
+src/lib/location-check.ts   kiểm tra quẹt theo hàng rào, ghi ngược geo_status
+src/app/api/attendance/check-locations/route.ts
+src/components/location-check.tsx
+scripts/seed-geofence.ts    2 địa điểm (trụ sở Q1, nhà máy VSIP) + 1 bộ ngưỡng
+scripts/check-locations.ts  npm run check:locations — phân bố theo trạng thái
+tests/geofence-liveness.spec.ts  42 test, port từ Phase 1 + 3 test cho bug tìm thấy
+tests/geo-params.spec.ts    20 test ràng buộc tham số + adapter
+tests/location-check.spec.ts   12 test trên PostgreSQL thật, transaction rollback
+
 Dockerfile                  ★ 3 tầng: deps → builder → runner (standalone)
 docker-compose.yml          db + migrate (one-shot) + app
 docker/migrate.sh           chờ DB → migrate → EXCLUDE → seed (theo cờ)
@@ -272,6 +286,8 @@ cp .env.docker.example .env # rồi ĐỔI MẬT KHẨU
 docker compose up -d --build  # db + migrate + app; xem docs/deployment.md
 npm run seed:tax            # biểu thuế TNCN — 3 chế độ theo thời gian
 npm run seed:employees      # 12 nhân viên (phải chạy TRƯỚC seed:attendance)
+npm run seed:geofence       # 2 địa điểm + 1 bộ ngưỡng liveness (không cần dữ liệu)
+npm run check:locations     # kiểm tra vị trí 411 quẹt di động, in phân bố
 npm run seed:payment        # 4 cấu hình ngân hàng + tài khoản NV + xuất một lô
 npm run demo:payment        # 17 kiểm tra qua HTTP thật (cần dev server ở 3100)
 npm run seed:all            # cả mười một loại chính sách
@@ -314,10 +330,23 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **13** | ~~Nối chấm công vào lương~~ ✅ bỏ map fixture hardcode trong `run-payroll`, đọc `daily_attendance`; thêm phụ cấp đêm 30% + OT đêm 200/210/270/390%; trang kỳ lương hiện **công thức đã chạy** cho từng thành phần | ✅ |
 | **15** | ~~Docker + triển khai~~ ✅ Dockerfile 3 tầng (standalone), compose `db`/`migrate`/`app`, `/api/health` có ping DB, `docs/deployment.md`. Dọn DB trắng lộ ra **3 lỗi seed thật** — xem ghi chú thiết kế | ✅ |
 | **14** | ~~File thanh toán ngân hàng~~ ✅ `employee_bank_accounts` + `bank_payment_batches`, định dạng VCB/TCB/CTG/MBB là **tham số** (kind thứ 11), nội dung file lưu kèm SHA-256 và server từ chối trả nếu băm lệch, một kỳ một lô ép bằng unique index riêng phần, trang `/payments` | ✅ |
+| **16** | ~~Geofence + chống giả mạo khuôn mặt~~ ✅ port từ Phase 1 thành policy kind thứ **12** (GEOFENCE) và thứ **13** (LIVENESS). Haversine + point-in-polygon + đối soát BSSID; FFT 2D thật để bắt vân Moiré của màn hình, Laplacian để bắt ảnh in. Kết luận ghi vào `raw_punches` tại thời điểm kiểm tra. **Tìm thấy và sửa một bug 41%** khi port | ✅ |
 
 ---
 
 ## Ghi chú thiết kế
+
+**Vì sao kết luận geofence được LƯU chứ không tính lại mỗi lần xem.** Hàng rào là chính sách **có khoảng hiệu lực**. Nếu kết luận được tính lúc hiển thị thì ba tháng sau, một quẹt thẻ cũ sẽ bị đánh giá theo hàng rào MỚI — và kết luận hôm nay khác kết luận đã dùng để quyết định ngày hôm đó. Cùng một quẹt, hai bản án, và không ai biết bản nào đã được dùng. Nên `geo_status` ghi vào `raw_punches` tại thời điểm kiểm tra, cùng nguyên tắc với `policySnapshot` của phiếu lương. Điều đó cũng có nghĩa là một quẹt có thể mang kết luận theo hàng rào đã hết hiệu lực — đó là **đúng**, không phải bug.
+
+**Bốn trạng thái "có vấn đề" phải tách thành bốn, không phải một.** `REJECTED` (đứng sai chỗ / mock GPS / GPS quá mờ), `REVIEW` (trong bán kính cứng nhưng ngoài vùng tin cậy — vẫn được chấm công), `NO_FENCE` (địa điểm chưa được vẽ hàng rào — **lỗi của người quản trị**), `NO_GPS` (app không lấy được toạ độ — lỗi kỹ thuật, và iOS đổi quyền là cả công ty bị). Gộp bốn cái thành một con số "36 quẹt đáng ngờ" thì một lần quên vẽ hàng rào sẽ hiện ra thành hàng trăm vụ gian lận, và sau lần thứ hai không ai đọc danh sách đó nữa.
+
+**Vì sao chỉ thiết bị di động bị kiểm tra vị trí.** `shift_devices.device_type` phân biệt `MOBILE` và `TERMINAL`. Máy chấm công được bắt vít vào tường, vị trí của nó là hiển nhiên, và nó **không gửi toạ độ**. Áp geofence cho nó thì 342 quẹt hợp lệ thành 342 dòng "không có GPS" — tức là biến một hệ thống đang chạy đúng thành một danh sách cảnh báo dài vô nghĩa, đúng cái bẫy đã gặp với `needsReview` ở Phase 12.
+
+**Tổng sáu trọng số liveness phải đúng bằng 1, và ràng buộc đó nằm trong schema.** Điểm tổng hợp là tổng có trọng số, được so với `minConfidence` trong khoảng 0..1. Nếu trọng số cộng lại thành 0,7 thì điểm tối đa đạt được là 0,7 — đặt ngưỡng 0,8 là **không ai qua được**, kể cả người thật đứng trước camera. Ngược lại tổng 1,3 thì ảnh in ra giấy cũng có thể đạt 0,8. Cả hai hướng đều sai, cả hai đều không có thông báo nào kêu lên, và cả hai trông giống hệt "camera hôm nay chập chờn".
+
+**Khi port code cũ, hãy tìm chỗ cùng một quy tắc được phát biểu HAI lần.** `pointInPolygon` và `distanceToPolygonEdgeM` của Phase 1 đều phải xử lý "polygon đóng hay mở", và chúng hiểu khác nhau: hàm thứ nhất chỉ bỏ điểm cuối khi nó **thật sự** trùng điểm đầu, hàm thứ hai bỏ điểm cuối chỉ vì `polygon.length > 3`. Với một tứ giác khai báo mở, hàm thứ hai mất hẳn một cạnh và thay bằng đường chéo — khoảng cách tới biên ra **78.709 m thay vì 55.660 m, lệch 41%**. Hai chỗ cùng phát biểu một quy tắc là hai chỗ sẽ lệch nhau; nay cả hai gọi chung một hàm `openRing`, và có test khoá con số đó lại.
+
+**Một kỳ lương đã gửi ngân hàng thì không được tính lại — và lỗi RESTRICT nói lên điều đó.** `npm run payroll` trước đây mở đầu bằng `DELETE FROM pay_runs`, chạy tốt cho đến khi `bank_payment_batches` ra đời và trỏ vào nó bằng `ON DELETE RESTRICT`. Cách sửa không phải là xoá luôn uỷ nhiệm chi cho tiện: một lô ở trạng thái `SENT` là chứng từ **đã gửi ngân hàng**, xoá nó để chạy lại demo là xoá bằng chứng đối soát. Nay script phân biệt — lô `DRAFT`/`VOID` (chưa gửi, đã lỗi thời) thì xoá kèm cảnh báo, lô `SENT`/`RETURNED` thì **từ chối và thoát 1**, trừ khi người chạy tự bật `ALLOW_REPAID_PERIOD=true`.
 
 **Vì sao cân đối bút toán bị ép ở hai tầng.** `assertBalanced` trong engine ném lỗi trước khi bút toán rời khỏi hàm, và PostgreSQL còn một ràng buộc `CHECK (total_debit = total_credit)` trên bảng `gl_entries`. Nghe thừa, nhưng hai tầng này bắt hai loại lỗi khác nhau: engine bắt lỗi do **logic sinh bút toán** sai, còn ràng buộc DB bắt mọi đường ghi khác — một script chạy tay, một lần migrate dở, một endpoint sau này ai đó thêm vào mà quên gọi engine. Kiểm chứng bằng cách ghi SQL thô cố tình lệch: DB trả `23514`. Chỉ tin vào kiểm tra ở tầng ứng dụng nghĩa là tin rằng mọi đường vào dữ liệu đều đi qua đúng một hàm, và đó là giả định không giữ được lâu.
 

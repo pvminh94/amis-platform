@@ -1,13 +1,23 @@
 import { and, eq, gte, lte, sql } from 'drizzle-orm';
 
-import { dailyAttendance, employees } from '@/db/schema';
+import { dailyAttendance, employees, rawPunches } from '@/db/schema';
 import { getDb } from '@/db/client';
 import { Alert, Badge, Card } from '@/components/ui';
 import { AttendanceRecompute } from '@/components/attendance-recompute';
+import { LocationCheck } from '@/components/location-check';
 
 export const dynamic = 'force-dynamic';
 
 const fmt = (n: number) => n.toLocaleString('vi-VN');
+
+const GEO_VI: Record<string, string> = {
+  TRUSTED: 'Đáng tin',
+  REVIEW: 'Cần rà soát',
+  REJECTED: 'Từ chối vị trí',
+  NO_FENCE: 'Chưa vẽ hàng rào',
+  NO_GPS: 'Không có GPS',
+  '(chưa kiểm tra)': 'Chưa kiểm tra / máy cố định',
+};
 const h = (min: number) => (min / 60).toFixed(1);
 
 /** Tháng hiện tại theo giờ VN, dạng YYYY-MM. */
@@ -104,6 +114,27 @@ export default async function AttendancePage({
     .where(and(gte(dailyAttendance.workDate, from), lte(dailyAttendance.workDate, to)));
   const t = totals[0]!;
 
+  // Phân bố kết quả kiểm tra VỊ TRỊ của quẹt thô trong kỳ.
+  //
+  // `(chưa kiểm tra)` gồm cả quẹt từ máy cố định — chúng KHÔNG BAO GIỜ được kiểm
+  // tra, và đó là đúng: máy chấm công được lắp cố định nên vị trí của nó là hiển
+  // nhiên. Hiện riêng để người xem không nghĩ rằng hệ thống bỏ sót một nửa số quẹt.
+  const geoRows = await db
+    .select({
+      status: sql<string>`coalesce(geo_status, '(chưa kiểm tra)')`,
+      n: sql<number>`count(*)::int`,
+    })
+    .from(rawPunches)
+    .where(
+      and(
+        gte(rawPunches.punchedAt, sql`${from}::date`),
+        lte(rawPunches.punchedAt, sql`(${to}::date + 1)`),
+      ),
+    )
+    .groupBy(sql`1`)
+    .orderBy(sql`2 desc`);
+  const geoTotal = geoRows.reduce((a, r) => a + r.n, 0);
+
   // Dòng cần nhân sự xem. Đây là phần QUAN TRỌNG NHẤT của trang: một bảng chấm
   // công mà phải cuộn 360 dòng để tìm 8 dòng có vấn đề thì không dùng được.
   //
@@ -149,11 +180,44 @@ export default async function AttendancePage({
         dưới chạy bao nhiêu lần cũng ra cùng một kết quả.
       </Alert>
 
-      <div className="mt-6">
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
         <Card title="Tính lại công">
           <AttendanceRecompute from={from} to={to} />
         </Card>
+        <Card title="Kiểm tra vị trí quẹt (geofence)">
+          <LocationCheck from={from} to={to} />
+        </Card>
       </div>
+
+      {geoTotal > 0 && (
+        <div className="mt-6">
+          <Card title={`Vị trí quẹt thẻ trong kỳ — ${fmt(geoTotal)} quẹt`}>
+            <div className="flex flex-wrap gap-2">
+              {geoRows.map((g) => (
+                <Badge
+                  key={g.status}
+                  tone={
+                    g.status === 'TRUSTED'
+                      ? 'active'
+                      : g.status === 'REJECTED'
+                        ? 'danger'
+                        : g.status === 'REVIEW' || g.status === 'NO_FENCE'
+                          ? 'warn'
+                          : 'neutral'
+                  }
+                >
+                  {GEO_VI[g.status] ?? g.status}: {fmt(g.n)}
+                </Badge>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-[var(--muted)]">
+              Kết luận được LƯU tại thời điểm kiểm tra, không tính lại mỗi lần xem —
+              hàng rào là chính sách có khoảng hiệu lực, nên tính lại theo hàng rào
+              hôm nay sẽ cho kết luận khác với cái đã dùng để quyết định ngày hôm đó.
+            </p>
+          </Card>
+        </div>
+      )}
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[

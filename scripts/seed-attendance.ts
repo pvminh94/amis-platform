@@ -83,14 +83,48 @@ const db = getDb();
 // ---------------------------------------------------------------------------
 console.log('\n=== SEED CHẤM CÔNG ===\n');
 
+// 0. Dọn dữ liệu do chính script này sinh ra --------------------------------
+//
+// TRƯỚC ĐÂY KHÔNG CÓ BƯỚC NÀY, và comment ở đầu file vẫn khẳng định "chạy lại bao
+// nhiêu lần cũng ra đúng một kết quả". Khẳng định đó SAI: `onConflictDoNothing`
+// chỉ idempotent khi các dòng sinh ra trùng khoá với dòng cũ. Thêm hai lệnh gọi
+// `rnd()` vào hàm sinh toạ độ là đủ làm lệch cả dãy số, timestamp đổi, và lần
+// chạy thứ hai chèn THÊM một bộ quẹt mới — 763 dòng thành 1134, mỗi ngày công có
+// hai bộ quẹt chồng nhau.
+//
+// Script seed mà chỉ chạy được một lần thì không phải seed, là bẫy. Xoá dữ liệu
+// CỦA CHÍNH NÓ trước khi nạp lại.
+await db.execute(sql`DELETE FROM daily_attendance`);
+await db.execute(sql`DELETE FROM raw_punches`);
+console.log('✓ Đã dọn daily_attendance + raw_punches của lần chạy trước');
+
 // 1. Thiết bị ------------------------------------------------------------
+// deviceType quyết định CÓ kiểm tra geofence hay không. Hai máy cố định được
+// bắt vít vào tường nên vị trí của chúng là hiển nhiên và chúng không gửi toạ
+// độ; áp geofence cho chúng thì mọi quẹt đều thành "không có GPS".
 const DEVICES = [
-  { serial: 'DEV-GATE-01', model: 'Hikvision DS-K1T671M', protocol: 'HIK_ISAPI', location: 'Cổng chính' },
-  { serial: 'DEV-XUONG-02', model: 'Ronald Jack F18', protocol: 'ZK_ADMS', location: 'Xưởng sản xuất' },
-  { serial: 'DEV-MOBILE', model: 'AMIS Mobile App', protocol: 'MOBILE', location: 'Di động (GPS)' },
+  { serial: 'DEV-GATE-01', model: 'Hikvision DS-K1T671M', protocol: 'HIK_ISAPI', location: 'Cổng chính', siteCode: 'SITE_HQ', deviceType: 'TERMINAL' },
+  { serial: 'DEV-XUONG-02', model: 'Ronald Jack F18', protocol: 'ZK_ADMS', location: 'Xưởng sản xuất', siteCode: 'SITE_BINH_DUONG', deviceType: 'TERMINAL' },
+  { serial: 'DEV-MOBILE', model: 'AMIS Mobile App', protocol: 'MOBILE', location: 'Di động (GPS)', siteCode: 'SITE_HQ', deviceType: 'MOBILE' },
 ] as const;
 for (const d of DEVICES) {
-  await db.insert(shiftDevices).values({ ...d }).onConflictDoNothing();
+  // onConflictDoUPDATE chứ không phải DoNothing: thiết bị đã tồn tại từ trước khi
+  // hai cột site_code / device_type ra đời, và DoNothing sẽ để chúng NULL mãi —
+  // tức là không quẹt thẻ nào được kiểm tra geofence, một cách âm thầm.
+  await db
+    .insert(shiftDevices)
+    .values({ ...d })
+    .onConflictDoUpdate({
+      target: shiftDevices.serial,
+      set: {
+        model: d.model,
+        protocol: d.protocol,
+        location: d.location,
+        siteCode: d.siteCode,
+        deviceType: d.deviceType,
+        active: true,
+      },
+    });
 }
 console.log(`✓ ${DEVICES.length} máy chấm công`);
 
@@ -194,10 +228,80 @@ for (const r of rosterRowsDb) rosterMap.set(`${r.employeeCode}|${r.workDate}`, r
  * Tỉ lệ được chọn để mọi nhánh của engine đều có dữ liệu thật đi qua.
  */
 let punchCount = 0;
+
+/**
+ * Toạ độ quanh trụ sở Quận 1 (SITE_HQ, bán kính cứng 200 m, mềm 120 m).
+ *
+ * 1 độ vĩ ≈ 111.320 m; 1 độ kinh ở vĩ độ 10,78 ≈ 109.357 m.
+ * Nên 200 m ≈ 0,00180 độ vĩ và 0,00183 độ kinh.
+ *
+ * Phân bố CÓ CHỦ ĐÍCH để mọi nhánh của geofence đều có dữ liệu thật đi qua:
+ * nếu mọi quẹt đều đứng đúng giữa văn phòng thì nhánh REJECTED và NO_GPS không
+ * bao giờ được chạy thử, và chúng sẽ hỏng đúng lúc cần.
+ */
+const HQ_LAT = 10.776889;
+const HQ_LNG = 106.700806;
+const M_PER_DEG_LAT = 111_320;
+const M_PER_DEG_LNG = 111_320 * Math.cos((HQ_LAT * Math.PI) / 180);
+
+const gpsFor = (emp: string): {
+  latitude: number;
+  longitude: number;
+  accuracyMeters: number;
+  bssid: string | null;
+  isMockLocation: boolean;
+} => {
+  const r = rnd();
+  // 82% trong vùng tin cậy (< 120 m) — đa số người chấm công đúng chỗ.
+  // 10% trong vùng cứng nhưng ngoài vùng mềm (120–200 m) → REVIEW.
+  //  6% ngoài bán kính cứng (> 300 m) → REJECTED.
+  //  1% vị trí giả lập (mock provider) → REJECTED.
+  //  1% GPS quá mờ (accuracy 150 m > ngưỡng 65 m) → REJECTED.
+  let metres: number;
+  let mock = false;
+  let accuracy = 8 + Math.round(rnd() * 22);
+  if (r < 0.82) metres = 15 + rnd() * 90;
+  else if (r < 0.92) metres = 125 + rnd() * 70;
+  else if (r < 0.98) metres = 320 + rnd() * 900;
+  else if (r < 0.99) {
+    metres = 10 + rnd() * 40;
+    mock = true;
+  } else {
+    metres = 20 + rnd() * 60;
+    accuracy = 150;
+  }
+  const bearing = rnd() * Math.PI * 2;
+  // NV012 cố ý không có BSSID: thiết bị iOS không cho đọc, nên nhánh
+  // "không đối soát được WiFi" phải có dữ liệu thật đi qua.
+  const bssid = emp === 'NV012' ? null : 'a4:5e:60:11:22:33';
+  return {
+    latitude: Number((HQ_LAT + (Math.cos(bearing) * metres) / M_PER_DEG_LAT).toFixed(6)),
+    longitude: Number((HQ_LNG + (Math.sin(bearing) * metres) / M_PER_DEG_LNG).toFixed(6)),
+    accuracyMeters: accuracy,
+    bssid,
+    isMockLocation: mock,
+  };
+};
+
 const punch = async (emp: string, device: string, when: Date, dir: 'IN' | 'OUT') => {
+  // CHỈ quẹt từ app di động mới có toạ độ. Máy chấm công cố định không gửi GPS —
+  // và đó chính là lý do `deviceType` tồn tại: phân biệt "không có GPS vì là máy
+  // cố định" (bình thường) với "không có GPS vì app không lấy được" (đáng ngờ).
+  const gps = device === 'DEV-MOBILE' ? gpsFor(emp) : null;
   await db
     .insert(rawPunches)
-    .values({ employeeCode: emp, deviceSerial: device, punchedAt: when, direction: dir, source: 'DEVICE' })
+    .values({
+      employeeCode: emp,
+      deviceSerial: device,
+      punchedAt: when,
+      direction: dir,
+      source: 'DEVICE',
+      latitude: gps?.latitude ?? null,
+      longitude: gps?.longitude ?? null,
+      accuracyMeters: gps?.accuracyMeters ?? null,
+      bssid: gps?.bssid ?? null,
+      isMockLocation: gps?.isMockLocation ?? false,
+    })
     .onConflictDoNothing();
   punchCount++;
 };

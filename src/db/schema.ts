@@ -870,6 +870,23 @@ export const shiftDevices = pgTable(
      */
     protocol: varchar('protocol', { length: 24 }).notNull(),
     location: varchar('location', { length: 120 }),
+    /**
+     * Mã ĐỊA ĐIỂM, trỏ tới GEOFENCE.regimeCode.
+     *
+     * Không dùng khoá ngoại: GEOFENCE là một policy kind, thực thể của nó nằm
+     * trong policy_versions với mã ở cột `code` — không có bảng "địa điểm" riêng
+     * để trỏ vào. Đổi lại, service phải xử lý trường hợp mã này chưa có hàng rào.
+     */
+    siteCode: varchar('site_code', { length: 32 }),
+    /**
+     * MOBILE = chấm công từ điện thoại (có GPS, có thể có mock location).
+     * TERMINAL = máy chấm công cố định (vị trí của MÁY là đáng tin, không cần GPS).
+     *
+     * Phân biệt này quyết định có kiểm tra geofence hay không. Áp geofence cho
+     * máy chấm công cố định là vô nghĩa — nó được bắt vít vào tường — và sẽ báo
+     * lỗi cho mọi quẹt thẻ chỉ vì máy không gửi toạ độ.
+     */
+    deviceType: varchar('device_type', { length: 12 }).notNull().default('TERMINAL'),
     /** Thiết bị hỏng/thay mới thì tắt, KHÔNG XOÁ — quẹt cũ vẫn phải trỏ về được. */
     active: boolean('active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -879,6 +896,10 @@ export const shiftDevices = pgTable(
     chkProtocol: check(
       'chk_shift_devices_protocol',
       sql`${t.protocol} IN ('HIK_ISAPI','ZK_ADMS','RONALD_TCP','MOBILE','MANUAL')`,
+    ),
+    chkDeviceType: check(
+      'chk_shift_devices_type',
+      sql`${t.deviceType} IN ('TERMINAL','MOBILE')`,
     ),
   }),
 );
@@ -926,6 +947,36 @@ export const rawPunches = pgTable(
     bssid: varchar('bssid', { length: 32 }),
     /** Định danh điện thoại — một người không nên quẹt từ 20 thiết bị khác nhau. */
     deviceId: varchar('device_id', { length: 120 }),
+    // -----------------------------------------------------------------------
+    // KIỂM TRA VỊ TRÍ (Phase 16). Cột toạ độ đã có sẵn từ đầu nhưng chưa có chỗ
+    // nào đọc chúng — schema được thiết kế cho geofence mà geofence chưa từng
+    // được nối vào.
+    //
+    // Kết quả kiểm tra được LƯU, không tính lại mỗi lần xem. Lý do: hàng rào là
+    // tham số có khoảng hiệu lực, nên ba tháng sau khi xem lại một quẹt thẻ cũ
+    // mà tính lại theo hàng rào MỚI thì kết quả sẽ khác cái đã dùng để quyết
+    // định ngày hôm đó. Cùng nguyên tắc với policySnapshot của phiếu lương.
+    // -----------------------------------------------------------------------
+    /** Hệ điều hành khai báo vị trí là giả lập (mock provider). */
+    isMockLocation: boolean('is_mock_location').notNull().default(false),
+    /**
+     * Kết luận về vị trí: TRUSTED / REVIEW / REJECTED / NO_FENCE / NO_GPS.
+     *
+     * NO_FENCE khác REJECTED: địa điểm chưa cấu hình hàng rào là việc của người
+     * quản trị, không phải lỗi của người lao động. Gộp hai cái lại thì một lần
+     * quên cấu hình sẽ hiện ra thành hàng trăm vụ "gian lận".
+     */
+    geoStatus: varchar('geo_status', { length: 16 }),
+    /** Khoảng cách tới tâm/biên hàng rào (mét), null nếu không tính được. */
+    geoDistanceM: integer('geo_distance_m'),
+    /** Mã lý do từ chối, để đối chiếu mà không phải đọc chuỗi tiếng Việt. */
+    geoReasons: jsonb('geo_reasons').$type<string[]>().notNull().default([]),
+    // --- Chống giả mạo khuôn mặt ---
+    /** Điểm liveness 0..100 (integer để tránh sai số dấu phẩy động khi so ngưỡng). */
+    livenessScore: integer('liveness_score'),
+    livenessPassed: boolean('liveness_passed'),
+    /** PRINT_2D / SCREEN_REPLAY / STATIC_REPLAY / NO_FACE, null nếu không nghi. */
+    livenessAttack: varchar('liveness_attack', { length: 20 }),
     importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -947,6 +998,17 @@ export const rawPunches = pgTable(
     chkCoords: check(
       'chk_raw_punches_coords',
       sql`${t.latitude} IS NULL OR (${t.latitude} BETWEEN -90 AND 90 AND ${t.longitude} BETWEEN -180 AND 180)`,
+    ),
+    chkGeo: check(
+      'chk_raw_punches_geo',
+      sql`${t.geoStatus} IS NULL OR ${t.geoStatus} IN
+          ('TRUSTED','REVIEW','REJECTED','NO_FENCE','NO_GPS')`,
+    ),
+    chkLiveness: check(
+      'chk_raw_punches_liveness',
+      sql`(${t.livenessScore} IS NULL OR (${t.livenessScore} >= 0 AND ${t.livenessScore} <= 100))
+          AND (${t.livenessAttack} IS NULL OR ${t.livenessAttack} IN
+               ('PRINT_2D','SCREEN_REPLAY','STATIC_REPLAY','NO_FACE'))`,
     ),
     chkAccuracy: check(
       'chk_raw_punches_accuracy',
