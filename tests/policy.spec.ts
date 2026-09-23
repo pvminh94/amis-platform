@@ -384,7 +384,7 @@ describe('Policy Registry (PostgreSQL thật)', () => {
   });
 
   it('DB TỪ CHỐI hai bản ACTIVE chồng lấn (EXCLUDE constraint)', async () => {
-    // Chèn trực tiếp bằng SQL thô để绕过 application layer — chứng minh ràng
+    // Chèn trực tiếp bằng SQL thô để đi vòng qua application layer — chứng minh ràng
     // buộc nằm ở DB chứ không phải ở code.
     await expect(
       raw.query(

@@ -20,7 +20,7 @@
     "seed:bhxh": "tsx scripts/seed-bhxh.ts",
     "seed:salary": "tsx scripts/seed-salary.ts",
     "seed:approval": "tsx scripts/seed-approval.ts",
-    "seed:all": "npm run seed:salary && npm run seed:approval && npm run seed:print && npm run seed:report && npm run seed:gl && npm run seed:shift && npm run seed:auth && npm run seed:attendance && npm run seed:payment",
+    "seed:all": "npm run seed:policies && npm run seed:auth && npm run seed:employees && npm run seed:attendance && npm run payroll && npm run seed:report && npm run seed:payment",
     "seed:print": "tsx scripts/seed-print.ts",
     "payroll": "tsx scripts/run-payroll.ts",
     "seed:report": "tsx scripts/seed-report.ts",
@@ -33,7 +33,10 @@
     "seed:shift": "tsx scripts/seed-shift.ts",
     "seed:attendance": "tsx scripts/seed-attendance.ts",
     "seed:payment": "tsx scripts/seed-payment.ts",
-    "demo:payment": "tsx scripts/payment-flow.ts"
+    "demo:payment": "tsx scripts/payment-flow.ts",
+    "seed:policies": "npm run seed:tax && npm run seed:bhxh && npm run seed:salary && npm run seed:approval && npm run seed:print && npm run seed:gl && npm run seed:shift",
+    "seed:tax": "tsx scripts/seed-tax.ts",
+    "seed:employees": "tsx scripts/seed-employees.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",

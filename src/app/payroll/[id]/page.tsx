@@ -1,3 +1,9 @@
+// Fragment có key: slips.map trả về HAI <tr> cho mỗi nhân viên (dòng số liệu +
+// dòng chi tiết), nên phải bọc. Bản trước dùng `<>` trần và đặt key ở <tr> bên
+// trong — React chỉ nhìn key ở PHẦN TỬ NGOÀI CÙNG, nên cả danh sách không có
+// key nào và nó cảnh báo. Không chỉ ồn: thiếu key thì khi danh sách đổi thứ tự
+// React có thể giữ lại DOM của dòng khác.
+import { Fragment } from 'react';
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { isUuid } from '@/lib/uuid';
@@ -129,8 +135,8 @@ export default async function PayRunDetailPage({
                   inInsuranceBase: boolean;
                 }[];
                 return (
-                  <>
-                    <tr key={s.id} className="border-b border-[var(--border)]">
+                  <Fragment key={s.id}>
+                    <tr className="border-b border-[var(--border)]">
                       <td className="py-2 pr-3 font-mono text-xs">{s.employeeCode}</td>
                       <td className="py-2 pr-3">{s.fullName}</td>
                       <td className="py-2 pr-3 text-xs">{region}</td>
@@ -157,7 +163,7 @@ export default async function PayRunDetailPage({
                       thiếu mất một nửa giá trị — người ta sửa công thức mà không
                       thấy nó áp vào đâu.
                     */}
-                    <tr key={`${s.id}-d`} className="border-b border-[var(--border)]">
+                    <tr className="border-b border-[var(--border)]">
                       <td colSpan={8} className="px-0 py-0">
                         <details className="group">
                           <summary className="cursor-pointer py-1 text-xs text-[var(--muted)] hover:text-[var(--accent)]">
@@ -193,7 +199,7 @@ export default async function PayRunDetailPage({
                         </details>
                       </td>
                     </tr>
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

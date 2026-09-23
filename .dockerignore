@@ -1,0 +1,42 @@
+# ============================================================================
+# .dockerignore — giữ image nhỏ và KHÔNG đưa bí mật vào layer
+# ============================================================================
+# Bí mật — TUYỆT ĐỐI không được vào image. Layer Docker đọc được bằng
+# `docker history`, kể cả khi file bị xoá ở layer sau.
+.env
+.env.*
+!.env.example
+!.env.docker.example
+*.pem
+*.key
+
+# Build artifacts — image tự build lại từ source. Nếu để lọt .next/ vào context
+# thì bản build cũ trên máy dev sẽ đè lên bản build trong container.
+node_modules
+.next
+dist
+coverage
+out
+
+# VCS & tooling
+.git
+.gitignore
+.github
+.vscode
+.idea
+*.log
+
+# Test & docs — không cần trong image.
+# .dockerignore áp cho MỌI tầng, kể cả builder, nên `npm run test` KHÔNG chạy
+# được trong container. Test chạy NGOÀI Docker (npm run verify) — đó là chủ ý:
+# test cần PostgreSQL thật, và dựng DB trong image build chỉ để chạy test một
+# lần rồi vứt đi là trả giá cho một thứ CI đã làm tốt hơn.
+tests
+docs
+*.spec.ts
+vitest.config.ts
+.eslintrc*
+
+# OS
+.DS_Store
+Thumbs.db

@@ -193,6 +193,15 @@ scripts/seed-payment.ts     4 cấu hình ngân hàng + 11 tài khoản + xuất
 scripts/payment-flow.ts     17 kiểm tra QUA HTTP THẬT (route chưa từng chạy nếu không)
 tests/payment.spec.ts       33 test: định dạng file, bỏ dấu, đối chiếu tổng
 tests/payment-service.spec.ts  17 test: ràng buộc DB, máy trạng thái, PostgreSQL thật
+
+Dockerfile                  ★ 3 tầng: deps → builder → runner (standalone)
+docker-compose.yml          db + migrate (one-shot) + app
+docker/migrate.sh           chờ DB → migrate → EXCLUDE → seed (theo cờ)
+docs/deployment.md          triển khai, sao lưu, nâng cấp, và những gì CHƯA kiểm chứng
+scripts/seed-tax.ts         VN_PIT — trước đây chỉ có trong script demo
+scripts/seed-employees.ts   12 nhân viên, tách khỏi payroll để phá vòng phụ thuộc
+scripts/roster.ts           danh sách nhân viên dùng chung cho hai script
+src/app/api/health/…        /api/health — CÓ ping DB, không chỉ "Next sống chưa"
 ```
 
 ### Đã kiểm chứng
@@ -236,6 +245,8 @@ Test đáng chú ý:
 - Nhân viên thiếu tài khoản **không bị bỏ qua im lặng** — bị loại khỏi file và nêu trong `missing[]` kèm số tiền chưa trả
 - Bỏ dấu tiếng Việt **giữ lại `/ - .`** — bản đầu tiên xoá mọi ký hiệu nên `LUONG T09/2026 NV001` ra thành `LUONG T092026 NV001`. Ngân hàng vẫn nhận, nhưng đó là dòng người lao động dùng để nhận ra lương của mình trên sao kê
 - Tổng ở footer được đối chiếu với tổng các dòng **trước khi ghi**; lệch một đồng là không sinh file
+- `npm run payroll` trên một kỳ **không có chấm công** → **từ chối chạy**, exit 1. Bản trước chỉ in một dòng cảnh báo rồi trả đủ 26 ngày công và exit 0 — một chuỗi seed sai thứ tự vì thế không ai phát hiện: số vẫn đẹp, chỉ là sai
+- Dựng một **PostgreSQL trắng** bằng đúng `docker/migrate.sh` cho ra DB giống hệt DB phát triển: 25 bảng, 11 migration, 2 EXCLUDE, tổng chi phí kỳ lương **522.915.846 đ**, lô thanh toán **407.724.352 đ** — khớp từng đồng
 - `employeesWithoutAccount` chỉ nêu người **còn làm việc** — bản đầu tiên liệt cả người đã nghỉ, và một danh sách dài toàn nhiễu thì không ai đọc
 
 ### Chạy thử
@@ -257,6 +268,10 @@ npm run seed:attendance     # thiết bị, 11 ngày lễ 2026, hệ xoay, lịc
                             # 762 quẹt thẻ — rồi tính công và in đối chiếu
 npm run demo:gl             # ghi sổ kỳ 09/2026, in bút toán + bảng đối chiếu
 npm run demo:rbac           # 17 kiểm tra phân quyền + phân tách nhiệm vụ
+cp .env.docker.example .env # rồi ĐỔI MẬT KHẨU
+docker compose up -d --build  # db + migrate + app; xem docs/deployment.md
+npm run seed:tax            # biểu thuế TNCN — 3 chế độ theo thời gian
+npm run seed:employees      # 12 nhân viên (phải chạy TRƯỚC seed:attendance)
 npm run seed:payment        # 4 cấu hình ngân hàng + tài khoản NV + xuất một lô
 npm run demo:payment        # 17 kiểm tra qua HTTP thật (cần dev server ở 3100)
 npm run seed:all            # cả mười một loại chính sách
@@ -297,6 +312,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **11** | ~~Ghép cặp quẹt thẻ~~ ✅ FIRST-IN/LAST-OUT theo đoạn, suy giờ khi thiếu quẹt nhưng đánh dấu `MISSING_PUNCH`, OT tách 150/200/300% + phần đêm, grace period và mọi ngưỡng là tham số | ✅ |
 | **12** | ~~Chấm công ngày~~ ✅ 5 bảng (`shift_devices` / `raw_punches` chỉ-thêm / `employee_shifts` / `public_holidays` / `daily_attendance` dẫn xuất), hệ xoay là policy kind thứ mười, API + trang `/attendance`, seed 762 quẹt · 360 ngày công | ✅ |
 | **13** | ~~Nối chấm công vào lương~~ ✅ bỏ map fixture hardcode trong `run-payroll`, đọc `daily_attendance`; thêm phụ cấp đêm 30% + OT đêm 200/210/270/390%; trang kỳ lương hiện **công thức đã chạy** cho từng thành phần | ✅ |
+| **15** | ~~Docker + triển khai~~ ✅ Dockerfile 3 tầng (standalone), compose `db`/`migrate`/`app`, `/api/health` có ping DB, `docs/deployment.md`. Dọn DB trắng lộ ra **3 lỗi seed thật** — xem ghi chú thiết kế | ✅ |
 | **14** | ~~File thanh toán ngân hàng~~ ✅ `employee_bank_accounts` + `bank_payment_batches`, định dạng VCB/TCB/CTG/MBB là **tham số** (kind thứ 11), nội dung file lưu kèm SHA-256 và server từ chối trả nếu băm lệch, một kỳ một lô ép bằng unique index riêng phần, trang `/payments` | ✅ |
 
 ---
@@ -443,5 +459,17 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Vì sao thiếu tài khoản thì loại khỏi file chứ không dừng cả lô.** Một người chưa kịp mở tài khoản không được phép khiến 400 người còn lại không nhận được lương. Nhưng cũng không được bỏ qua im lặng — người bị loại xuất hiện trong `missing[]` kèm đúng số tiền chưa trả, ngay trên màn hình lúc xuất, để kế toán đối chiếu trước khi gửi thay vì phát hiện vào kỳ sau. Tài khoản **chưa đối chiếu** thì vẫn vào file (chặn thì tê liệt) nhưng nêu trong `unverified[]`: chuyển tiền vào số chưa xác nhận là lỗi không sửa được sau khi gửi.
 
 **Vì sao `payment:export` thuộc kế toán, không thuộc nhân sự.** `HR_ADMIN` có `payroll:run` nhưng không có `payment:export`; `CHIEF_ACCOUNTANT` thì ngược lại. Nếu một tài khoản làm được cả hai thì nó tự tăng lương cho mình rồi tự chuyển, và không có ai ở giữa để phát hiện. Cùng nguyên tắc tách nhiệm vụ đã áp dụng cho `gl:post`.
+
+**Ba lỗi seed chỉ lộ ra trên một DB trắng.** Suốt mười bốn phase, mọi thứ đều chạy trên cùng một DB phát triển đã được seed bằng tay qua nhiều lần. Dựng lại từ đầu bằng `docker/migrate.sh` thì cả ba hiện ra cùng lúc, và cả ba đều là loại "vẫn chạy, vẫn exit 0, chỉ là sai":
+
+1. **`VN_PIT` không có script seed.** Ba bộ tham số đã nằm sẵn trong `tax-params.ts`, nhưng thứ duy nhất đưa chúng vào DB là `demo-law-change.ts` — một script DEMO. Trên DB trắng, `seed:all` chạy tới `seed:salary` là nổ `NOT_RESOLVABLE`, và cách "sửa" duy nhất là chạy script demo để lấy dữ liệu pháp lý. Nay có `seed:tax`.
+2. **Vòng phụ thuộc giữa nhân viên và chấm công.** `seed:attendance` cần nhân viên (khoá ngoại), nhân viên lại do `payroll` tạo, mà `payroll` thì cần chấm công. Không có thứ tự nào đúng. Tách `seed:employees` ra, và đưa roster về một module dùng chung — hai bản sao của cùng một roster là hai bản sẽ lệch.
+3. **`payroll` âm thầm trả đủ lương khi không có chấm công.** Bản trước in `[!] CHƯA CÓ CHẤM CÔNG … tính đủ 26 ngày công theo mặc định` rồi **tính tiếp**. Kỳ không có chấm công nghĩa là HOẶC chưa import dữ liệu HOẶC cả công ty nghỉ — cả hai cần người quyết, không phải một giá trị mặc định. Nay từ chối chạy, trừ khi bật `ALLOW_NO_ATTENDANCE=true` một cách tường minh.
+
+Bài học không phải là ba bug đó, mà là **một DB phát triển sống lâu sẽ che mất mọi lỗi khởi tạo**. Nếu không viết Dockerfile thì cả ba sẽ nằm im cho tới lần deploy đầu tiên.
+
+**Vì sao `migrate` là một service riêng trong compose.** Nếu migration nằm trong entrypoint của app thì một lần migrate lỗi để lại một container "đang chạy" nhưng không dùng được, và mỗi lần app restart lại migrate lại. Tách ra thì migrate lỗi = exit code khác 0, hiện ngay trong `docker compose ps`, và `app` không start nhờ `condition: service_completed_successfully`. Service đó dùng **tầng builder** vì `drizzle-kit` và `tsx` là devDependency, không có trong standalone bundle — nhét chúng vào image chạy thật thì mất hết lợi ích của `output: 'standalone'`.
+
+**Vì sao `/api/health` phải ping DB.** Một container Next.js vẫn trả 200 cho trang tĩnh khi DB đã chết. HEALTHCHECK chỉ đo "Next có sống không" sẽ báo xanh trong khi không ai đăng nhập hay xem được bảng lương nào — tức là đúng lúc cần báo động nhất thì nó im.
 
 **Giảm trừ gia cảnh KHÔNG chia theo ngày công.** Người vào làm giữa tháng vẫn được trừ đủ 15,5 triệu. Chia nhỏ theo tỷ lệ ngày là sai luật và làm người lao động nộp thuế oan.

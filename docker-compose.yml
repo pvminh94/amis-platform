@@ -1,0 +1,137 @@
+# ==============================================================================
+# AMIS PLATFORM — docker compose
+# ==============================================================================
+#   cp .env.docker.example .env      # rồi ĐỔI MẬT KHẨU
+#   docker compose up -d --build
+#   docker compose logs -f migrate   # xem migration + seed
+#
+# Ba service:
+#   db      PostgreSQL — nguồn sự thật duy nhất
+#   migrate one-shot: migration + ràng buộc + (tuỳ chọn) seed. App CHỜ nó exit 0
+#   app     Next.js standalone, image nhỏ, chỉ phục vụ
+#
+# KHÔNG dùng nguyên trạng cho production: đổi mọi mật khẩu, đặt JWT_SECRET
+# riêng, bật TLS ở reverse proxy. Chi tiết ở docs/deployment.md
+# ==============================================================================
+
+name: amis-platform
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 18 — cùng phiên bản lớn đã dùng để phát triển và kiểm chứng
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:18-alpine
+    container_name: amis-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-amis_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-amis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Bắt buộc đặt POSTGRES_PASSWORD trong .env}
+      # UTF-8 bắt buộc: toàn bộ dữ liệu nghiệp vụ là tiếng Việt. Bỏ dòng này
+      # thì tên nhân viên lưu được nhưng so sánh/sắp xếp theo collation sai.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      TZ: Asia/Ho_Chi_Minh
+      PGTZ: Asia/Ho_Chi_Minh
+    # KHÔNG expose ra host. App nối qua mạng nội bộ Docker (db:5432).
+    #   1. Máy chủ rất dễ đã có Postgres khác ở 5432
+    #   2. Mở Postgres ra interface mạng là rủi ro không cần thiết
+    # Cần DB client thì tạo docker-compose.override.yml:
+    #   services: { db: { ports: ["127.0.0.1:5432:5432"] } }
+    # rồi vào bằng SSH tunnel:  ssh -L 5432:127.0.0.1:5432 user@server
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready chạy TRONG container nên dùng localhost, và phải truyền đúng user/db
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-amis} -d ${POSTGRES_DB:-amis_platform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [amis]
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  # ---------------------------------------------------------------------------
+  # migrate — one-shot. Dùng TẦNG BUILDER vì drizzle-kit/tsx là devDependency,
+  # không có trong standalone bundle của app.
+  # ---------------------------------------------------------------------------
+  migrate:
+    build:
+      context: .
+      target: builder
+    container_name: amis-migrate
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-amis}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-amis_platform}
+      # JWT_SECRET phải có mặt: seed:auth băm mật khẩu và ký token demo.
+      JWT_SECRET: ${JWT_SECRET:?Bắt buộc đặt JWT_SECRET trong .env}
+      # true = nạp dữ liệu mẫu (12 nhân viên, 360 ngày công, kỳ lương 09/2026).
+      # Mặc định false: hệ thống thật không được tự nạp dữ liệu mẫu, và seed
+      # ghi đè tài khoản về mật khẩu seed.
+      SEED_ON_START: ${SEED_ON_START:-false}
+    command: ["sh", "docker/migrate.sh"]
+    networks: [amis]
+
+  # ---------------------------------------------------------------------------
+  # app — Next.js standalone
+  # ---------------------------------------------------------------------------
+  app:
+    build:
+      context: .
+      target: runner
+    container_name: amis-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      # service_completed_successfully: app KHÔNG start nếu migrate exit khác 0.
+      # Thiếu dòng này thì code mới chạy trên schema cũ và lỗi ra thành 500
+      # khó hiểu thay vì một container migrate đỏ rõ ràng.
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      # Ghi đè DATABASE_URL: .env mang giá trị localhost, mà trong container
+      # localhost là CHÍNH NÓ. Quên dòng này là lỗi "ECONNREFUSED 127.0.0.1:5432"
+      # dù Postgres đang chạy khoẻ — và thông báo đó chỉ sang sai chỗ.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-amis}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-amis_platform}
+      JWT_SECRET: ${JWT_SECRET:?Bắt buộc đặt JWT_SECRET trong .env}
+      # CORS: mặc định chỉ cùng origin. Thêm origin công khai thật của bạn.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      TZ: Asia/Ho_Chi_Minh
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    networks: [amis]
+    healthcheck:
+      # /api/health CÓ ping PostgreSQL — chỉ đo "Next sống không" thì sẽ báo
+      # xanh trong khi DB chết và không ai đăng nhập được.
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+volumes:
+  pgdata:
+
+networks:
+  amis:
+    driver: bridge

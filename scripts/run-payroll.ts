@@ -27,20 +27,7 @@ const { aggregateAttendanceForPayroll } = await import('../src/lib/attendance.js
 const db = getDb();
 const fmt = (n: number) => n.toLocaleString('vi-VN');
 
-const ROSTER = [
-  { employeeCode: 'NV001', fullName: 'Nguyễn Văn An', department: 'Kỹ thuật', wageRegion: 'I', trainedWorker: true, dependents: 1, baseSalary: 25_000_000, hourlyRate: 120_000 },
-  { employeeCode: 'NV002', fullName: 'Trần Thị Bình', department: 'Kỹ thuật', wageRegion: 'I', trainedWorker: true, dependents: 2, baseSalary: 32_000_000, hourlyRate: 155_000 },
-  { employeeCode: 'NV003', fullName: 'Lê Văn Cường', department: 'Kinh doanh', wageRegion: 'I', trainedWorker: false, dependents: 0, baseSalary: 18_000_000, hourlyRate: 87_000 },
-  { employeeCode: 'NV004', fullName: 'Phạm Thị Dung', department: 'Kinh doanh', wageRegion: 'II', trainedWorker: true, dependents: 3, baseSalary: 22_000_000, hourlyRate: 106_000 },
-  { employeeCode: 'NV005', fullName: 'Hoàng Văn Em', department: 'Nhân sự', wageRegion: 'I', trainedWorker: true, dependents: 1, baseSalary: 28_000_000, hourlyRate: 135_000 },
-  { employeeCode: 'NV006', fullName: 'Vũ Thị Giang', department: 'Kế toán', wageRegion: 'I', trainedWorker: true, dependents: 2, baseSalary: 26_000_000, hourlyRate: 125_000 },
-  { employeeCode: 'NV007', fullName: 'Đặng Văn Hải', department: 'Sản xuất', wageRegion: 'III', trainedWorker: false, dependents: 4, baseSalary: 12_000_000, hourlyRate: 58_000 },
-  { employeeCode: 'NV008', fullName: 'Bùi Thị Hoa', department: 'Sản xuất', wageRegion: 'III', trainedWorker: true, dependents: 1, baseSalary: 14_500_000, hourlyRate: 70_000 },
-  { employeeCode: 'NV009', fullName: 'Đỗ Văn Inh', department: 'Sản xuất', wageRegion: 'IV', trainedWorker: false, dependents: 0, baseSalary: 9_000_000, hourlyRate: 43_000 },
-  { employeeCode: 'NV010', fullName: 'Ngô Thị Kim', department: 'Kỹ thuật', wageRegion: 'I', trainedWorker: true, dependents: 0, baseSalary: 45_000_000, hourlyRate: 216_000 },
-  { employeeCode: 'NV011', fullName: 'Lý Văn Long', department: 'Kinh doanh', wageRegion: 'II', trainedWorker: false, dependents: 2, baseSalary: 16_000_000, hourlyRate: 77_000 },
-  { employeeCode: 'NV012', fullName: 'Trịnh Thị Mai', department: 'Nhân sự', wageRegion: 'IV', trainedWorker: true, dependents: 1, baseSalary: 11_000_000, hourlyRate: 53_000 },
-] as const;
+const { ROSTER, OTHER } = await import('./roster.js');
 
 console.log('\n' + '═'.repeat(78));
 console.log('  TÍNH LƯƠNG HÀNG LOẠT — employee thật, chính sách từ database');
@@ -88,26 +75,39 @@ console.log(`[2] Kỳ ${String(MONTH).padStart(2, '0')}/${YEAR} — ${std} ngày
 // nhưng không liên quan gì tới quẹt thẻ. Nay đọc từ daily_attendance.
 const attVars = await aggregateAttendanceForPayroll(db, { periodYear: YEAR, periodMonth: MONTH });
 const covered = ROSTER.filter((e) => attVars[e.employeeCode]).length;
-if (covered === 0) {
-  console.log(
-    `\n[!] CHƯA CÓ CHẤM CÔNG cho kỳ ${MONTH}/${YEAR}. Mọi người sẽ được tính đủ ${std} ngày công\n` +
-      `    theo mặc định — chạy 'npm run seed:attendance' để có dữ liệu thật.\n`,
-  );
-} else {
-  console.log(`[2] ✓ Chấm công: ${covered}/${ROSTER.length} nhân viên có dữ liệu kỳ ${MONTH}/${YEAR}`);
-}
 
-/**
- * KPI và tạm ứng KHÔNG nằm trong bảng chấm công — chúng đến từ đánh giá năng lực
- * và từ kế toán. Ở hệ thống thật hai module đó cấp; trong demo này để số cố định
- * và ghi rõ, chứ không trộn lẫn với dữ liệu chấm công thật.
- */
-const OTHER: Record<string, { kpiScore: number; advanceAmount: number }> = {
-  NV001: { kpiScore: 85, advanceAmount: 2_000_000 },
-  NV002: { kpiScore: 95, advanceAmount: 0 },
-  NV003: { kpiScore: 60, advanceAmount: 0 },
-  NV010: { kpiScore: 100, advanceAmount: 0 },
-};
+// DỪNG, không cảnh báo rồi đi tiếp.
+//
+// Bản trước chỉ in một dòng "[!] CHƯA CÓ CHẤM CÔNG … mọi người sẽ được tính đủ
+// N ngày công theo mặc định" rồi TÍNH TIẾP. Kết quả: một kỳ lương không có một
+// dòng chấm công nào vẫn chạy ra bảng lương trông hoàn toàn bình thường — trả
+// đủ lương cho những ngày không ai chứng minh là đã làm. Và vì script exit 0,
+// một chuỗi seed sai thứ tự (payroll chạy trước seed:attendance) không ai phát
+// hiện: số vẫn đẹp, chỉ là sai.
+//
+// Kỳ không có chấm công nghĩa là HOẶC chưa import dữ liệu HOẶC cả công ty nghỉ —
+// cả hai đều cần người quyết, không phải một giá trị mặc định.
+if (covered === 0 && process.env.ALLOW_NO_ATTENDANCE !== 'true') {
+  console.error(
+    `\n✗ KHÔNG CÓ CHẤM CÔNG cho kỳ ${MONTH}/${YEAR} — từ chối tính lương.\n` +
+      `  Kỳ không có chấm công là HOẶC chưa import dữ liệu HOẶC cả công ty nghỉ;\n` +
+      `  cả hai đều cần người quyết. Chạy 'npm run seed:attendance' trước.\n` +
+      `  Nếu thật sự muốn trả đủ ${std} ngày công mà không cần bằng chứng:\n` +
+      `      ALLOW_NO_ATTENDANCE=true npm run payroll\n`,
+  );
+  await closeDb();
+  process.exit(1);
+}
+console.log(
+  `[2] ${covered === 0 ? '⚠' : '✓'} Chấm công: ${covered}/${ROSTER.length} nhân viên có dữ liệu kỳ ${MONTH}/${YEAR}` +
+    (covered === 0 ? '  (ALLOW_NO_ATTENDANCE=true — tính đủ ngày công, KHÔNG có bằng chứng)' : ''),
+);
+if (covered > 0 && covered < ROSTER.length) {
+  // Nêu rõ AI thiếu, không chỉ con số. "9/12 có dữ liệu" không nói được là ba
+  // người nào đang bị trả lương theo mặc định.
+  const thieu = ROSTER.filter((e) => !attVars[e.employeeCode]).map((e) => e.employeeCode);
+  console.log(`    ⚠ ${thieu.length} người KHÔNG có chấm công, sẽ tính đủ ${std} ngày công: ${thieu.join(', ')}`);
+}
 
 const attendance = Object.fromEntries(
   ROSTER.map((e) => {
@@ -115,6 +115,9 @@ const attendance = Object.fromEntries(
     const other = OTHER[e.employeeCode] ?? { kpiScore: 100, advanceAmount: 0 };
     return [
       e.employeeCode,
+      // Nhánh else chỉ tới được khi covered > 0 (người này thiếu) hoặc khi
+      // người chạy đã bật ALLOW_NO_ATTENDANCE. Cả hai đường đều đã in cảnh báo
+      // nêu rõ tên — không có đường nào trả đủ lương một cách âm thầm.
       real
         ? { ...real, ...other }
         : { workedDays: std, kpiScore: other.kpiScore, advanceAmount: other.advanceAmount },

@@ -10,7 +10,7 @@
  * VÌ SAO KHÔNG DÙNG PUPPETEER/CHROMIUM:
  *   Chromium ~170MB tải về và ~300MB RAM khi chạy, trong sandbox 2GB đang
  *   chạy chung PostgreSQL và dev server. Đổi lại ta được gì? Một file PDF.
- *   Trong khi trình duyệt đã có sẵn "In → Lưu thành PDF" với chất lượng排版
+ *   Trong khi trình duyệt đã có sẵn "In → Lưu thành PDF" với chất lượng dàn trang
  *   tốt hơn bất kỳ thư viện nào. ERPNext cũng làm đúng như vậy: Print Format
  *   render HTML, trình duyệt lo phần PDF.
  *

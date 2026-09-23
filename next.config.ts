@@ -3,6 +3,15 @@ import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   // Cho phép preview host của môi trường này truy cập dev server
   allowedDevOrigins: ['*.e2b.app', 'localhost', '127.0.0.1'],
+  // ---------------------------------------------------------------------------
+  // `standalone`: build ra .next/standalone/server.js kèm ĐÚNG những gói nó cần,
+  // thay vì cả node_modules. Image chạy vì thế nhỏ hơn nhiều lần.
+  //
+  // Hệ quả phải nhớ: drizzle-kit và tsx KHÔNG có trong standalone (chúng là
+  // devDependency và không được trace). Nên migration và seed chạy ở TẦNG
+  // BUILDER của Dockerfile, qua service `migrate` riêng — không phải trong app.
+  // ---------------------------------------------------------------------------
+  output: 'standalone',
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: false },
 

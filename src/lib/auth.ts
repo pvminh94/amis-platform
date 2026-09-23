@@ -497,7 +497,7 @@ export async function changePassword(
   const user = found[0];
   if (!user) throw new AuthError('USER_NOT_FOUND', 'Không tìm thấy người dùng');
 
-  // Xác minh mật khẩu hiện tại — không cho phép đổi chỉ凭 vào access token còn
+  // Xác minh mật khẩu hiện tại — không cho phép đổi chỉ dựa vào access token còn
   // hiệu lực. Máy để quên màn hình đang đăng nhập không được thành máy đổi mật khẩu.
   if (!(await verifyPassword(currentPassword, user.passwordHash))) {
     throw new AuthError('WRONG_PASSWORD', 'Mật khẩu hiện tại không đúng');

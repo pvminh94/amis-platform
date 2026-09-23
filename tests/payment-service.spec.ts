@@ -110,7 +110,7 @@ async function makeAccount(
 /**
  * Tạo một kỳ lương. `month` PHẢI khác nhau giữa các test: `uq_pay_run_period`
  * là UNIQUE trên (năm, tháng), và bản đầu tiên dùng cứng 09/2026 nên test thứ
- * hai trở đi nổ ngay ở INSERT — không phải lỗi của code đang测.
+ * hai trở đi nổ ngay ở INSERT — không phải lỗi của code đang kiểm tra.
  */
 let nextMonth = 1;
 async function makeRun(
