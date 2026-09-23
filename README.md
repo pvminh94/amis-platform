@@ -113,6 +113,16 @@ src/policy/registry.ts    ensureKind / createVersion / activateVersion /
 src/engine/pit.ts         calculateProgressivePit, calculateTaxableIncome
 drizzle/0000_init.sql     migration
 scripts/demo-law-change.ts  demo đổi luật
+
+src/components/schema-form.tsx   ★ THÀNH PHẦN THEN CHỐT: đọc JSON Schema
+                                   trong policy_kinds.params_schema và TỰ SINH
+                                   form + validateAgainstSchema
+src/components/ui/index.tsx      primitives viết tay kiểu shadcn
+src/app/page.tsx                 danh sách loại chính sách
+src/app/policies/[kind]/page.tsx  dòng thời gian phiên bản + audit
+src/app/policies/[kind]/new/page.tsx  form tạo bản mới
+src/app/api/policies/**          GET/POST policies, versions, activate
+tests/schema-form.spec.ts        chống lệch giữa JSON Schema và Zod schema
 ```
 
 ### Đã kiểm chứng
@@ -124,7 +134,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              45/45 test
+  ✓ vitest              58/58 test
 ```
 
 Test đáng chú ý:
@@ -133,6 +143,8 @@ Test đáng chú ý:
 - Engine `calculatePit(NaN, …)` → **ném lỗi**, không trả 0đ âm thầm
 - Quét 1M → 200M: biểu 5 bậc luôn ≤ biểu 7 bậc (nếu có mức nào ngược lại thì một bộ tham số bị nhập sai)
 - `resolvePolicy` vào khoảng trống → **ném lỗi rõ ràng**, không dùng giá trị mặc định
+- **JSON Schema và Zod schema phải cùng tập trường** — bắt được bug thật, xem ghi chú thiết kế bên dưới
+- Giá trị do `defaultsFromSchema` sinh ra **không được phép lưu** (form không cho lưu bộ tham số rỗng)
 
 ### Chạy thử
 
@@ -140,8 +152,9 @@ Test đáng chú ý:
 cp .env.example .env        # điền DATABASE_URL
 npm install
 npm run db:setup            # migrate + EXCLUDE constraint
-npm run test                # 45 test
+npm run test                # 58 test
 npm run demo                # demo đổi luật
+npm run dev                 # giao diện tại http://localhost:3100
 ```
 
 Demo: cùng một nhân viên (gross 45tr, 1 phụ thuộc), bốn kỳ lương:
@@ -162,7 +175,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | Phase | Nội dung | Trạng thái |
 |---|---|---|
 | **1** | Policy Registry + engine thuế | ✅ xong, đã kiểm chứng |
-| **2** | Next.js + shadcn UI: trang quản lý chính sách, form tự sinh từ JSON Schema | ⬜ |
+| **2** | Next.js UI: trang quản lý chính sách, form tự sinh từ JSON Schema | ✅ xong, đã kiểm chứng |
 | **3** | Mở rộng loại chính sách: BHXH (tỷ lệ, trần 20×), ngưỡng duyệt, công thức lương | ⬜ |
 | **4** | Workflow designer (React Flow) + rule engine biểu thức | ⬜ |
 | **5** | Report builder + print format (HTML/CSS → PDF) | ⬜ |
@@ -171,6 +184,12 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 ---
 
 ## Ghi chú thiết kế
+
+**Hai schema phải luôn đi cùng nhau.** Mỗi loại chính sách có HAI mô tả: JSON Schema (giao diện dùng để tự sinh form) và Zod schema (backend dùng để validate). Chúng phải khớp nhau tuyệt đối. Bug thật đã xảy ra: khi bỏ `.default(0)` khỏi `exemptMealCapMonthly` ở Zod (tham số pháp lý không được có giá trị ngầm định), trường đó thành bắt buộc — nhưng `required` trong JSON Schema không được cập nhật. Hệ quả: form hiển thị nó là tuỳ chọn, người dùng bỏ trống, trường số trống được gửi lên là `0`, và Zod **chấp nhận 0** vì `minimum = 0`. Trần miễn thuế ăn giữa ca thành 0đ, người lao động bị đánh thuế oan trên tiền ăn ca, và không một dòng log nào báo. `tests/schema-form.spec.ts` canh đúng điểm lệch này, và `validateAgainstSchema` chặn ở form — chỉ form mới phân biệt được "quên điền" với "cố ý đặt 0".
+
+**Vì sao không dùng shadcn CLI.** CLI kéo `radix-ui` và hàng chục dependency vào sandbox ~1,4 GB đang chạy chung PostgreSQL. Các primitive cần dùng (Card, Button, Badge, Field, Alert) đơn giản hơn tự viết nhiều lần là trả giá đó.
+
+**`resolve.extensionAlias` trong `next.config.ts`.** Code trong `src/` viết theo ESM chuẩn: `import './schema.js'` dù file thật là `schema.ts`. Node thuần và tsx bắt buộc phải có extension như vậy, nhưng webpack không tự hiểu quy ước đó. Giữ extension đúng chuẩn tốt hơn là bỏ hết extension rồi mất khả năng chạy script/test trực tiếp bằng tsx.
 
 **Vì sao Drizzle chứ không Prisma.** Prisma sinh kiểu TypeScript **lúc build** từ `schema.prisma`. Thêm một trường nghĩa là sửa schema → migrate → build → deploy — ngược hoàn toàn với tùy biến lúc chạy. Drizzle vẫn type-safe nhưng cho phép query động.
 

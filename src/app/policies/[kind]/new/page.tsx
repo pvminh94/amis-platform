@@ -21,7 +21,12 @@ import {
   Field,
   inputCls,
 } from '@/components/ui';
-import { SchemaForm, defaultsFromSchema, type JsonSchema } from '@/components/schema-form';
+import {
+  SchemaForm,
+  defaultsFromSchema,
+  validateAgainstSchema,
+  type JsonSchema,
+} from '@/components/schema-form';
 
 type Json = Record<string, unknown>;
 
@@ -76,6 +81,18 @@ export default function NewVersionPage() {
 
     if (!effectiveFrom) {
       setError('Phải chọn ngày bắt đầu hiệu lực.');
+      setBusy(false);
+      return;
+    }
+
+    // Chặn TRƯỚC khi gọi API: trường số để trống sẽ được gửi lên là 0 và
+    // backend chấp nhận 0 (minimum = 0), nên chỉ form mới phân biệt được
+    // "quên điền" với "cố ý đặt 0". Xem validateAgainstSchema.
+    const schemaIssues = validateAgainstSchema(schema, params as Record<string, unknown>);
+    if (schemaIssues.length > 0) {
+      setIssues(
+        schemaIssues.map((i) => ({ path: i.path as (string | number)[], message: i.message })),
+      );
       setBusy(false);
       return;
     }

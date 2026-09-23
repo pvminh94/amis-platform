@@ -360,3 +360,122 @@ export function defaultsFromSchema(schema: JsonSchema): Record<string, Json> {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// VALIDATE PHÍA CLIENT — chặn submit trước khi gọi API
+// ---------------------------------------------------------------------------
+
+export interface SchemaIssue {
+  path: (string | number)[];
+  message: string;
+}
+
+/**
+ * Trường có `type: ['integer', 'null']` (như `upto` của bậc thuế cao nhất)
+ * thì `null` là MỘT GIÁ TRỊ HỢP LỆ — nghĩa là "không chặn trên", không phải
+ * "người dùng quên điền". Coi null là trống sẽ bắt người dùng nhập một con số
+ * vô nghĩa cho bậc cuối, và nếu họ nhập đại thì biểu thuế sai.
+ */
+const isMissing = (v: unknown, s: JsonSchema) => {
+  const allowsNull = Array.isArray(s.type) && s.type.includes('null');
+  if (v === undefined || v === '') return true;
+  return v === null && !allowsNull;
+};
+
+/**
+ * Kiểm tra giá trị form theo đúng JSON Schema.
+ *
+ * TẠI SAO CẦN, dù backend đã validate bằng Zod:
+ *   Trường số để trống được gửi lên là 0 (xem ScalarField, dòng xử lý
+ *   `raw === ''`), và Zod chấp nhận 0 vì các trường tiền có minimum = 0.
+ *   Nghĩa là bỏ trống "Trần miễn thuế ăn giữa ca" sẽ LƯU ĐƯỢC thành 0đ,
+ *   người lao động bị đánh thuế oan trên tiền ăn ca, và không một dòng log
+ *   nào báo. Backend không thể phân biệt "cố ý đặt 0" với "quên điền",
+ *   chỉ có form mới biết. Đó là lý do tầng này tồn tại.
+ *
+ *   Lợi ích phụ: người dùng thấy sai ở trường nào ngay, không đợi round-trip.
+ *
+ * Đây KHÔNG thay thế Zod — backend vẫn là chốt chặn cuối. Hai tầng dùng chung
+ * MỘT JSON Schema nên cấu trúc không thể lệch nhau.
+ */
+export function validateAgainstSchema(
+  schema: JsonSchema,
+  value: Record<string, unknown> | null | undefined,
+  at: (string | number)[] = [],
+): SchemaIssue[] {
+  const issues: SchemaIssue[] = [];
+  const required = new Set(schema.required ?? []);
+  const obj = (value ?? {}) as Record<string, unknown>;
+
+  for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+    const v = obj[key];
+    const path = [...at, key];
+    const t = typeOf(sub);
+
+    if (required.has(key) && isMissing(v, sub)) {
+      issues.push({ path, message: 'Bắt buộc điền.' });
+      continue;
+    }
+    // Không có giá trị để kiểm tra tiếp. Riêng null: nếu schema cho phép null
+    // thì đó là giá trị hợp lệ (vd. upto của bậc cuối), nếu không cho phép
+    // thì đã bị chặn ở bước required hoặc sẽ bị chặn ở bước kiểm kiểu dưới.
+    if (v === null || v === undefined || v === '') continue;
+
+    if (t === 'array') {
+      const arr = Array.isArray(v) ? v : [];
+      const minItems = sub.minItems ?? (required.has(key) ? 1 : 0);
+      if (arr.length < minItems) {
+        issues.push({ path, message: `Cần ít nhất ${minItems} dòng.` });
+      }
+      if (sub.items) {
+        arr.forEach((row, i) => {
+          issues.push(
+            ...validateAgainstSchema(sub.items as JsonSchema, row as Record<string, unknown>, [
+              ...path,
+              i,
+            ]),
+          );
+        });
+      }
+      continue;
+    }
+
+    if (t === 'object') {
+      issues.push(...validateAgainstSchema(sub, v as Record<string, unknown>, path));
+      continue;
+    }
+
+    if (t === 'integer' || t === 'number') {
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        issues.push({ path, message: 'Phải là một số hợp lệ.' });
+        continue;
+      }
+      if (t === 'integer' && !Number.isInteger(v)) {
+        issues.push({ path, message: 'Phải là số nguyên (VND không có số lẻ).' });
+      }
+      if (typeof sub.minimum === 'number' && v < sub.minimum) {
+        issues.push({ path, message: `Không được nhỏ hơn ${fmtVnd(sub.minimum)}.` });
+      }
+      if (typeof sub.maximum === 'number' && v > sub.maximum) {
+        issues.push({ path, message: `Không được lớn hơn ${fmtVnd(sub.maximum)}.` });
+      }
+      continue;
+    }
+
+    // string / enum
+    if (typeof v !== 'string') {
+      issues.push({ path, message: 'Phải là chuỗi.' });
+      continue;
+    }
+    if (typeof sub.maxLength === 'number' && v.length > sub.maxLength) {
+      issues.push({ path, message: `Tối đa ${sub.maxLength} ký tự.` });
+    }
+    if (typeof sub.minLength === 'number' && v.length < sub.minLength) {
+      issues.push({ path, message: `Tối thiểu ${sub.minLength} ký tự.` });
+    }
+    if (Array.isArray(sub.enum) && !sub.enum.includes(v)) {
+      issues.push({ path, message: 'Giá trị không nằm trong danh sách cho phép.' });
+    }
+  }
+  return issues;
+}

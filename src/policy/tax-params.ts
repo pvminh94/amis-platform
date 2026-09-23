@@ -151,6 +151,13 @@ export const vnPitJsonSchema = {
     'selfDeduction',
     'dependentDeduction',
     'voluntaryPensionCapMonthly',
+    // Bắt buộc phải có mặt ở đây: Zod schema coi trường này là required
+    // (đã bỏ .default(0) vì tham số pháp lý không được có giá trị ngầm định).
+    // Nếu JSON Schema thiếu nó, form sẽ cho để trống → gửi 0 → trần miễn thuế
+    // ăn giữa ca thành 0đ → người lao động bị tính thuế oan trên tiền ăn ca,
+    // mà không một dòng log nào báo. tests/schema-form.spec.ts canh đúng
+    // điểm lệch này giữa hai schema.
+    'exemptMealCapMonthly',
   ],
   properties: {
     regimeCode: { type: 'string', title: 'Mã chế độ', maxLength: 32 },
