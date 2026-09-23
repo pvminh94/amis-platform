@@ -4,6 +4,7 @@
 // key nào và nó cảnh báo. Không chỉ ồn: thiếu key thì khi danh sách đổi thứ tự
 // React có thể giữ lại DOM của dòng khác.
 import { Fragment } from 'react';
+import { AuthDownload } from '@/components/auth-download';
 import { requirePageSession } from '@/lib/page-auth';
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
@@ -267,12 +268,12 @@ export default async function PayRunDetailPage({
                     </Badge>
                   </td>
                   <td className="py-1.5">
-                    <a
+                    {/* <a href> nhận về 401 vì không đính kèm được Authorization */}
+                    <AuthDownload
                       href={`/api/payment-batches/${b.id}/download`}
-                      className="text-[var(--accent)] underline"
-                    >
-                      tải
-                    </a>
+                      fileName={b.fileName}
+                      label="tải"
+                    />
                   </td>
                 </tr>
               ))}

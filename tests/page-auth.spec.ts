@@ -121,3 +121,75 @@ describe('cookie phiên', () => {
     expect(c).toContain('Path=/;');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cùng một bài học ở dạng khác: một endpoint có xác thực mà được mở bằng thẻ
+// <a href> trần thì endpoint đó KHÔNG BAO GIỜ tải được, vì thẻ <a> không đính
+// kèm được header Authorization. Lỗi này đã xảy ra thật ở bảng lịch sử /payments:
+// nút "tải" trả về trang JSON 401.
+// ---------------------------------------------------------------------------
+
+function tsxFiles(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    const st = statSync(full);
+    if (st.isDirectory()) tsxFiles(full, out);
+    else if (name.endsWith('.tsx')) out.push(full);
+  }
+  return out;
+}
+
+describe('không mở endpoint có xác thực bằng thẻ <a href> trần', () => {
+  const SRC = new URL('../src/', import.meta.url).pathname;
+  const files = [...tsxFiles(join(SRC, 'app')), ...tsxFiles(join(SRC, 'components'))];
+
+  it('có file để kiểm tra', () => {
+    expect(files.length).toBeGreaterThan(10);
+  });
+
+  // Chỉ khớp thẻ <a> THẬT. Regex ngây thơ `/href=\{?["'`]\/api\//` sẽ báo động
+  // cả `<AuthDownload href="/api/…">` — chỗ mà `href` là một prop được chuyển vào
+  // component có đính kèm token, tức là đúng. Một test bắt nhầm chỗ đúng thì lần
+  // sau người ta sẽ xoá test đi.
+  const BARE_ANCHOR = /<a[\s>][\s\S]{0,240}?href=\{?[`"']\/api\//;
+
+  it('regex bắt đúng thẻ <a> trần và bỏ qua component', () => {
+    // Tự kiểm tra công cụ trước khi dùng nó: nếu regex này sai thì assertion bên
+    // dưới vô nghĩa dù xanh hay đỏ.
+    expect(BARE_ANCHOR.test('<a\n  href={`/api/x/1/download`}\n>tải</a>')).toBe(true);
+    expect(BARE_ANCHOR.test('<a href="/api/reports/X?format=csv">CSV</a>')).toBe(true);
+    expect(BARE_ANCHOR.test('<AuthDownload\n  href={`/api/x/1/download`}\n  label="tải"\n/>')).toBe(false);
+    expect(BARE_ANCHOR.test('<a href="/payroll">Bảng lương</a>')).toBe(false);
+  });
+
+  it('bộ lọc chú thích bỏ được cả chú thích JSX', () => {
+    const strip = (x: string) => x.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const src = [
+      '{/* <a href> nhận về 401 vì không đính kèm được Authorization */}',
+      '<AuthDownload',
+      '  href={`/api/payment-batches/1/download`}',
+      '/>',
+    ].join('\n');
+    // Đây chính là trường hợp đã báo động nhầm: chữ "<a href>" nằm trong chú
+    // thích, còn href="/api/…" là prop của component hợp lệ.
+    expect(BARE_ANCHOR.test(src)).toBe(true);
+    expect(BARE_ANCHOR.test(strip(src))).toBe(false);
+  });
+
+  it('không thẻ <a> nào trỏ thẳng vào /api/', () => {
+    const bad: string[] = [];
+    for (const f of files) {
+      const src = readFileSync(f, 'utf8');
+      // Bỏ chú thích — chính chú thích giải thích lỗi cũng chứa chuỗi này. Phải bỏ
+      // CẢ chú thích khối: chú thích JSX viết là `{/* … */}`, không nằm ở đầu dòng
+      // nên bộ lọc theo dòng bỏ sót, và regex (vốn cho phép nhảy dòng) sẽ bắt đầu từ
+      // chữ "<a href>" TRONG CHÚ THÍCH rồi khớp vào thẻ <AuthDownload> bên dưới —
+      // tức là báo động nhầm đúng chỗ đã sửa.
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      if (BARE_ANCHOR.test(code)) bad.push(relative(SRC, f));
+    }
+    // Nếu danh sách này khác rỗng thì có một nút trên giao diện bấm vào là nhận
+    // 401. Dùng `api()` + blob thay thế (xem batch-download.tsx).
+    expect(bad).toEqual([]);
+  });
+});

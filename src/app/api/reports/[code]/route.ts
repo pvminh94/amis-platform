@@ -12,6 +12,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { authErrorResponse, requirePermission } from '@/lib/rbac';
 import { eq, and } from 'drizzle-orm';
 import { getDb, getPool } from '@/db/client';
 import { policyVersions } from '@/db/schema';
@@ -21,6 +22,12 @@ import { runReport, toCsv } from '@/engine/report';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request, ctx: { params: Promise<{ code: string }> }) {
+  try {
+    await requirePermission(req, 'report:read');
+  } catch (e) {
+    return authErrorResponse(e);
+  }
+
   const { code } = await ctx.params;
   const url = new URL(req.url);
   const at = url.searchParams.get('at') ?? new Date().toISOString().slice(0, 10);

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { authErrorResponse, requirePermission } from '@/lib/rbac';
 import { desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { policyKinds, policyVersions } from '@/db/schema';
@@ -6,7 +7,13 @@ import { policyKinds, policyVersions } from '@/db/schema';
 export const dynamic = 'force-dynamic';
 
 /** Danh sách loại chính sách + phiên bản đang hiệu lực của mỗi loại. */
-export async function GET() {
+export async function GET(req: Request) {
+  try {
+    await requirePermission(req, 'policy:read');
+  } catch (e) {
+    return authErrorResponse(e);
+  }
+
   try {
     const db = getDb();
     const kinds = await db.select().from(policyKinds);

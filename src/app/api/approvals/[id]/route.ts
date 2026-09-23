@@ -10,6 +10,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { authErrorResponse, requirePermission } from '@/lib/rbac';
 import { eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { approvalRequests } from '@/db/schema';
@@ -20,6 +21,12 @@ import { isUuid } from '@/lib/uuid';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  try {
+    await requirePermission(req, 'approval:act');
+  } catch (e) {
+    return authErrorResponse(e);
+  }
+
   const { id } = await ctx.params;
 
   let body: { action?: string; comment?: string; actorId?: string; actorRole?: string };

@@ -1,4 +1,5 @@
 import { and, eq } from 'drizzle-orm';
+import { AuthDownload } from '@/components/auth-download';
 import { requirePageSession } from '@/lib/page-auth';
 import { notFound } from 'next/navigation';
 import { getDb, getPool } from '@/db/client';
@@ -70,12 +71,12 @@ export default async function ReportDetailPage({
         <div className="mt-2 flex items-center gap-3">
           <h1 className="text-2xl font-semibold">{def.regimeLabel}</h1>
           <Badge tone="active">v{row.version}</Badge>
-          <a
+          <AuthDownload
             href={`/api/reports/${code}?format=csv`}
-            className="ml-auto rounded-md border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
-          >
-            Tải CSV ↓
-          </a>
+            fileName={`${code}.csv`}
+            label="Tải CSV ↓"
+            className="ml-auto rounded-md border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)] disabled:opacity-50"
+          />
         </div>
         <p className="mt-1 text-sm text-[var(--muted)]">{def.description}</p>
       </div>

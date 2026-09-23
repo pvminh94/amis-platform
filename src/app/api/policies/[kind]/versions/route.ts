@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { authErrorResponse, requirePermission } from '@/lib/rbac';
 import { getDb } from '@/db/client';
 import { createVersion, PolicyError } from '@/policy/registry';
 import { vnPitParamsSchema, vnPitJsonSchema } from '@/policy/tax-params';
@@ -138,6 +139,12 @@ const VALIDATORS: Record<
 };
 
 export async function POST(req: Request, ctx: { params: Promise<{ kind: string }> }) {
+  try {
+    await requirePermission(req, 'policy:write');
+  } catch (e) {
+    return authErrorResponse(e);
+  }
+
   const { kind } = await ctx.params;
   const entry = VALIDATORS[kind];
   if (!entry) {

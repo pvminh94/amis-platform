@@ -1,10 +1,17 @@
 import { NextResponse } from 'next/server';
+import { authErrorResponse, requirePermission } from '@/lib/rbac';
 import { getDb } from '@/db/client';
 import { activateVersion, PolicyError } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request, ctx: { params: Promise<{ kind: string; id: string }> }) {
+  try {
+    await requirePermission(req, 'policy:activate');
+  } catch (e) {
+    return authErrorResponse(e);
+  }
+
   const { id } = await ctx.params;
   try {
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;

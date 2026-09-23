@@ -2,6 +2,7 @@ import { desc, eq, sql } from 'drizzle-orm';
 import { requirePageSession } from '@/lib/page-auth';
 
 import { Alert, Badge, Card } from '@/components/ui';
+import { BatchDownload } from '@/components/batch-download';
 import { getDb } from '@/db/client';
 import { bankPaymentBatches, payRuns } from '@/db/schema';
 import { employeesWithoutAccount } from '@/lib/payment';
@@ -130,12 +131,9 @@ export default async function PaymentsPage() {
                       })}
                     </td>
                     <td className="py-1.5">
-                      <a
-                        href={`/api/payment-batches/${b.id}/download`}
-                        className="text-[var(--accent)] underline"
-                      >
-                        tải
-                      </a>
+                      {/* Thẻ <a href> ở đây nhận về 401 vì không đính kèm được
+                          header Authorization — xem src/components/batch-download.tsx */}
+                      <BatchDownload batchId={b.id} fileName={b.fileName} />
                     </td>
                   </tr>
                 ))}

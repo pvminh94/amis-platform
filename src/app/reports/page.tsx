@@ -1,4 +1,5 @@
 import { and, desc, eq } from 'drizzle-orm';
+import { AuthDownload } from '@/components/auth-download';
 import { requirePageSession } from '@/lib/page-auth';
 import { getDb } from '@/db/client';
 import { policyVersions } from '@/db/schema';
@@ -76,12 +77,12 @@ export default async function ReportsIndexPage() {
                     >
                       Chạy →
                     </a>
-                    <a
+                    <AuthDownload
                       href={`/api/reports/${p.regimeCode}?format=csv`}
-                      className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)]"
-                    >
-                      CSV
-                    </a>
+                      fileName={`${p.regimeCode}.csv`}
+                      label="CSV"
+                      className="rounded-md border border-[var(--border)] px-3 py-1.5 text-sm hover:bg-[var(--surface-2)] disabled:opacity-50"
+                    />
                   </div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted)]">

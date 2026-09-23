@@ -1,11 +1,18 @@
 import { NextResponse } from 'next/server';
+import { authErrorResponse, requirePermission } from '@/lib/rbac';
 import { desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import { policyAuditLogs, policyKinds, policyVersions } from '@/db/schema';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET(_req: Request, ctx: { params: Promise<{ kind: string }> }) {
+export async function GET(req: Request, ctx: { params: Promise<{ kind: string }> }) {
+  try {
+    await requirePermission(req, 'policy:read');
+  } catch (e) {
+    return authErrorResponse(e);
+  }
+
   const { kind } = await ctx.params;
   try {
     const db = getDb();
