@@ -23,7 +23,7 @@ for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').spl
 
 const { getDb, closeDb } = await import('../src/db/client.js');
 const { employees } = await import('../src/db/schema.js');
-const { ROSTER } = await import('./roster.js');
+const { ROSTER, DEVICE_PINS } = await import('./roster.js');
 
 const db = getDb();
 
@@ -31,10 +31,14 @@ console.log('\n' + '═'.repeat(78));
 console.log('  SEED NHÂN VIÊN');
 console.log('═'.repeat(78) + '\n');
 
+// Số thẻ trên máy chấm công. NV011/NV012 cố ý không có — xem DEVICE_PINS.
+let withPin = 0;
 for (const e of ROSTER) {
+  const pin = DEVICE_PINS[e.employeeCode] ?? null;
+  if (pin) withPin += 1;
   await db
     .insert(employees)
-    .values({ ...e, active: true })
+    .values({ ...e, deviceUserId: pin, active: true })
     .onConflictDoUpdate({
       target: employees.employeeCode,
       set: {
@@ -45,6 +49,7 @@ for (const e of ROSTER) {
         dependents: e.dependents,
         baseSalary: e.baseSalary,
         hourlyRate: e.hourlyRate,
+        deviceUserId: pin,
         active: true,
       },
     });
@@ -53,6 +58,7 @@ for (const e of ROSTER) {
 const depts = new Set(ROSTER.map((e) => e.department));
 const regions = new Set(ROSTER.map((e) => e.wageRegion));
 console.log(`  ✓ ${ROSTER.length} nhân viên — ${depts.size} bộ phận, ${regions.size} vùng lương`);
+console.log(`    ${withPin} người đã gán số thẻ trên máy, ${ROSTER.length - withPin} người chưa`);
 console.log(`    lương cơ bản ${Math.min(...ROSTER.map((e) => e.baseSalary)).toLocaleString('vi-VN')}` +
   ` → ${Math.max(...ROSTER.map((e) => e.baseSalary)).toLocaleString('vi-VN')} đ`);
 console.log('    (khoảng rộng đủ để trần BHXH 20× và sàn BHTN có tác dụng)\n');

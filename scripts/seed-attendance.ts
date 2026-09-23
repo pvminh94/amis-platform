@@ -102,10 +102,13 @@ console.log('✓ Đã dọn daily_attendance + raw_punches của lần chạy tr
 // deviceType quyết định CÓ kiểm tra geofence hay không. Hai máy cố định được
 // bắt vít vào tường nên vị trí của chúng là hiển nhiên và chúng không gửi toạ
 // độ; áp geofence cho chúng thì mọi quẹt đều thành "không có GPS".
+// Khoá webhook lấy từ roster.ts để không có bản sao thứ hai. Ở hệ thống thật
+// khoá phải sinh ngẫu nhiên và không commit — đây là khoá demo, ghi rõ như vậy.
+const { DEVICE_WEBHOOK_KEYS } = await import('./roster.js');
 const DEVICES = [
-  { serial: 'DEV-GATE-01', model: 'Hikvision DS-K1T671M', protocol: 'HIK_ISAPI', location: 'Cổng chính', siteCode: 'SITE_HQ', deviceType: 'TERMINAL' },
-  { serial: 'DEV-XUONG-02', model: 'Ronald Jack F18', protocol: 'ZK_ADMS', location: 'Xưởng sản xuất', siteCode: 'SITE_BINH_DUONG', deviceType: 'TERMINAL' },
-  { serial: 'DEV-MOBILE', model: 'AMIS Mobile App', protocol: 'MOBILE', location: 'Di động (GPS)', siteCode: 'SITE_HQ', deviceType: 'MOBILE' },
+  { serial: 'DEV-GATE-01', model: 'Hikvision DS-K1T671M', protocol: 'HIK_ISAPI', location: 'Cổng chính', siteCode: 'SITE_HQ', deviceType: 'TERMINAL', webhookKey: DEVICE_WEBHOOK_KEYS['DEV-GATE-01']! },
+  { serial: 'DEV-XUONG-02', model: 'Ronald Jack F18', protocol: 'ZK_ADMS', location: 'Xưởng sản xuất', siteCode: 'SITE_BINH_DUONG', deviceType: 'TERMINAL', webhookKey: DEVICE_WEBHOOK_KEYS['DEV-XUONG-02']! },
+  { serial: 'DEV-MOBILE', model: 'AMIS Mobile App', protocol: 'MOBILE', location: 'Di động (GPS)', siteCode: 'SITE_HQ', deviceType: 'MOBILE', webhookKey: DEVICE_WEBHOOK_KEYS['DEV-MOBILE']! },
 ] as const;
 for (const d of DEVICES) {
   // onConflictDoUPDATE chứ không phải DoNothing: thiết bị đã tồn tại từ trước khi
@@ -122,6 +125,7 @@ for (const d of DEVICES) {
         location: d.location,
         siteCode: d.siteCode,
         deviceType: d.deviceType,
+        webhookKey: d.webhookKey,
         active: true,
       },
     });

@@ -1,0 +1,2 @@
+ALTER TABLE "employees" ADD COLUMN "device_user_id" varchar(32);--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "uq_employees_device_user_id" ON "employees" USING btree ("device_user_id") WHERE "employees"."device_user_id" IS NOT NULL;

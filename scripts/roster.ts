@@ -30,6 +30,29 @@ export const ROSTER = [
 ] as const;
 
 /**
+ * Số thẻ / PIN của từng người TRÊN MÁY CHẤM CÔNG.
+ *
+ * Cố ý KHÁC mã nhân sự (NV001 → 1001): máy được cấu hình từ nhiều năm trước với
+ * dãy PIN riêng, còn mã nhân sự đổi theo đợt tái cấu trúc. Ép hai số trùng nhau
+ * nghĩa là mỗi lần đổi mã nhân sự phải đi nạp lại vân tay cho cả công ty.
+ *
+ * NV011 và NV012 cố ý KHÔNG có trong map — để nhánh "số thẻ không khớp ai" và
+ * nhánh "nhân viên chưa gán số thẻ" đều có dữ liệu thật đi qua.
+ */
+export const DEVICE_PINS: Record<string, string> = {
+  NV001: '1001', NV002: '1002', NV003: '1003', NV004: '1004',
+  NV005: '1005', NV006: '1006', NV007: '1007', NV008: '1008',
+  NV009: '1009', NV010: '1010',
+};
+
+/** Khoá webhook cho từng máy. Ở hệ thống thật: sinh ngẫu nhiên, không commit. */
+export const DEVICE_WEBHOOK_KEYS: Record<string, string> = {
+  'DEV-GATE-01': 'whk_gate01_demo_2026',
+  'DEV-XUONG-02': 'whk_xuong02_demo_2026',
+  'DEV-MOBILE': 'whk_mobile_demo_2026',
+};
+
+/**
  * KPI và tạm ứng KHÔNG nằm trong bảng chấm công — chúng đến từ đánh giá năng
  * lực và từ kế toán. Ở hệ thống thật hai module đó cấp; trong demo để số cố
  * định và ghi rõ, chứ không trộn lẫn với dữ liệu chấm công thật.

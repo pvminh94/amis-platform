@@ -329,6 +329,18 @@ export const employees = pgTable(
 
     /** Số người phụ thuộc đã đăng ký hợp lệ — giảm trừ 6,2 triệu/người. */
     dependents: integer('dependents').notNull().default(0),
+    /**
+     * Số thẻ / PIN của người này TRÊN MÁY CHẤM CÔNG.
+     *
+     * Tách khỏi `employeeCode` vì hai số đó thường KHÁC nhau: máy chấm công hay
+     * được cấu hình từ nhiều năm trước với dãy PIN riêng, trong khi mã nhân sự
+     * đổi theo đợt tái cấu trúc. Ép hai số trùng nhau nghĩa là mỗi lần đổi mã
+     * nhân sự phải đi nạp lại vân tay/khuôn mặt cho cả công ty.
+     *
+     * Không khoá ngoại, không bắt buộc: nhân viên văn phòng không chấm công bằng
+     * máy thì để trống.
+     */
+    deviceUserId: varchar('device_user_id', { length: 32 }),
 
     /** Lương cơ bản tháng (VND) — đầu vào cho công thức lương. */
     baseSalary: integer('base_salary').notNull(),
@@ -341,6 +353,16 @@ export const employees = pgTable(
   },
   (t) => ({
     uqCode: unique('uq_employees_code').on(t.employeeCode),
+    /**
+     * UNIQUE từng phần: chỉ ràng buộc những dòng CÓ số thẻ.
+     *
+     * Nếu để unique thường thì mọi nhân viên có device_user_id NULL sẽ xung đột
+     * nhau ngay ở dòng thứ hai — và "không dùng máy chấm công" là trạng thái hợp
+     * lệ của đa số nhân viên văn phòng.
+     */
+    uqDeviceUser: uniqueIndex('uq_employees_device_user_id')
+      .on(t.deviceUserId)
+      .where(sql`${t.deviceUserId} IS NOT NULL`),
     idxDept: index('idx_employees_department').on(t.department),
     chkRegion: check(
       'chk_employees_region',
@@ -887,6 +909,15 @@ export const shiftDevices = pgTable(
      * lỗi cho mọi quẹt thẻ chỉ vì máy không gửi toạ độ.
      */
     deviceType: varchar('device_type', { length: 12 }).notNull().default('TERMINAL'),
+    /**
+     * Khoá chia sẻ cho webhook của thiết bị.
+     *
+     * Máy chấm công không giữ được JWT — nó chỉ biết gửi HTTP POST. Nhưng để
+     * endpoint mở toang thì bất kỳ ai biết URL cũng bơm được quẹt thẻ giả cho
+     * cả công ty, và đó là cách nhanh nhất để phá bảng lương. Nên mỗi máy một
+     * khoá, so sánh bằng phép so thời gian không đổi.
+     */
+    webhookKey: varchar('webhook_key', { length: 64 }),
     /** Thiết bị hỏng/thay mới thì tắt, KHÔNG XOÁ — quẹt cũ vẫn phải trỏ về được. */
     active: boolean('active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -977,6 +1008,16 @@ export const rawPunches = pgTable(
     livenessPassed: boolean('liveness_passed'),
     /** PRINT_2D / SCREEN_REPLAY / STATIC_REPLAY / NO_FACE, null nếu không nghi. */
     livenessAttack: varchar('liveness_attack', { length: 20 }),
+    /**
+     * PHƯƠNG THỨC xác thực: FACE / FINGERPRINT / CARD / PASSWORD / UNKNOWN.
+     *
+     * TÁCH RIÊNG khỏi `source`, không gộp vào đó. `source` là KÊNH TRUYỀN
+     * (DEVICE / ADMS / MOBILE / MANUAL) — quẹt thẻ đến bằng đường nào. Còn cột
+     * này trả lời người đó xác thực BẰNG GÌ. Một quẹt qua ADMS bằng khuôn mặt có
+     * source='ADMS' và verify_method='FACE'; gộp hai khái niệm vào một cột thì
+     * mất một trong hai thông tin.
+     */
+    verifyMethod: varchar('verify_method', { length: 16 }),
     importedAt: timestamp('imported_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -1009,6 +1050,11 @@ export const rawPunches = pgTable(
       sql`(${t.livenessScore} IS NULL OR (${t.livenessScore} >= 0 AND ${t.livenessScore} <= 100))
           AND (${t.livenessAttack} IS NULL OR ${t.livenessAttack} IN
                ('PRINT_2D','SCREEN_REPLAY','STATIC_REPLAY','NO_FACE'))`,
+    ),
+    chkVerifyMethod: check(
+      'chk_raw_punches_verify_method',
+      sql`${t.verifyMethod} IS NULL OR ${t.verifyMethod} IN
+          ('FACE','FINGERPRINT','CARD','PASSWORD','UNKNOWN')`,
     ),
     chkAccuracy: check(
       'chk_raw_punches_accuracy',

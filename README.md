@@ -208,6 +208,14 @@ tests/geofence-liveness.spec.ts  42 test, port từ Phase 1 + 3 test cho bug tì
 tests/geo-params.spec.ts    20 test ràng buộc tham số + adapter
 tests/location-check.spec.ts   12 test trên PostgreSQL thật, transaction rollback
 
+src/engine/adms.ts          ★ parser ADMS/Push SDK: ATTLOG 7 cột, lệnh trả về máy
+src/engine/hikvision.ts     ★ parser ISAPI: JSON + XML + multipart, Digest RFC 2617
+src/lib/device-ingest.ts    xác thực máy, ánh xạ số thẻ → nhân sự, khử trùng lặp
+src/app/api/devices/adms/route.ts        webhook Ronald Jack / ZKTeco
+src/app/api/devices/hikvision/route.ts   webhook Hikvision FaceID
+tests/device-protocol.spec.ts   83 test parser (port từ Phase 1 + 7 test cho lỗi sửa)
+tests/device-ingest.spec.ts     14 test trên PostgreSQL thật
+
 Dockerfile                  ★ 3 tầng: deps → builder → runner (standalone)
 docker-compose.yml          db + migrate (one-shot) + app
 docker/migrate.sh           chờ DB → migrate → EXCLUDE → seed (theo cờ)
@@ -330,11 +338,24 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **13** | ~~Nối chấm công vào lương~~ ✅ bỏ map fixture hardcode trong `run-payroll`, đọc `daily_attendance`; thêm phụ cấp đêm 30% + OT đêm 200/210/270/390%; trang kỳ lương hiện **công thức đã chạy** cho từng thành phần | ✅ |
 | **15** | ~~Docker + triển khai~~ ✅ Dockerfile 3 tầng (standalone), compose `db`/`migrate`/`app`, `/api/health` có ping DB, `docs/deployment.md`. Dọn DB trắng lộ ra **3 lỗi seed thật** — xem ghi chú thiết kế | ✅ |
 | **14** | ~~File thanh toán ngân hàng~~ ✅ `employee_bank_accounts` + `bank_payment_batches`, định dạng VCB/TCB/CTG/MBB là **tham số** (kind thứ 11), nội dung file lưu kèm SHA-256 và server từ chối trả nếu băm lệch, một kỳ một lô ép bằng unique index riêng phần, trang `/payments` | ✅ |
+| **17** | ~~Parser giao thức thiết bị~~ ✅ ADMS/Push SDK (Ronald Jack, ZKTeco) + Hikvision ISAPI (JSON/XML/multipart, Digest RFC 2617). Hai webhook thật, xác thực bằng khoá mỗi máy, khử trùng lặp bằng ràng buộc DB. **Sửa 5 lỗi khi port** — xem ghi chú thiết kế | ✅ |
 | **16** | ~~Geofence + chống giả mạo khuôn mặt~~ ✅ port từ Phase 1 thành policy kind thứ **12** (GEOFENCE) và thứ **13** (LIVENESS). Haversine + point-in-polygon + đối soát BSSID; FFT 2D thật để bắt vân Moiré của màn hình, Laplacian để bắt ảnh in. Kết luận ghi vào `raw_punches` tại thời điểm kiểm tra. **Tìm thấy và sửa một bug 41%** khi port | ✅ |
 
 ---
 
 ## Ghi chú thiết kế
+
+**Lệnh `SET_TIME` gửi giờ UTC cho cái máy đang chờ giờ địa phương.** Bản Phase 1 viết `new Date().toISOString().slice(0,19)` bên trong `buildAdmsResponse`. Hai hậu quả cùng lúc: hàm không kiểm thử được (không khẳng định được nội dung lệnh), và `toISOString()` là **giờ UTC** trong khi máy chờ giờ địa phương — với máy ở Việt Nam thì mỗi lần đồng bộ, đồng hồ bị đặt **lùi 7 tiếng**. Kiểm chứng bằng cách cho máy "nhận" lệnh rồi parse lại: bản cũ ra 01:30 giờ VN trong khi thực tế là 08:30. Máy vẫn chấm công được, chỉ sai giờ, nên lỗi này sống rất lâu — và mọi ca đêm bị tính sang ngày hôm trước. Nay `now` và `tzOffsetHours` là tham số.
+
+**Webhook thiết bị phải trả 400 chứ không phải 500 cho một body hỏng.** Máy chấm công retry khi nhận 5xx. Nghĩa là một firmware gửi thiếu trường `dateTime` sẽ khiến máy bắn lại sự kiện đó **mãi mãi**, log đầy 500, và không quẹt nào được ghi. Trớ trêu là chính comment trong `extractAlertFromText` của Phase 1 đã cảnh báo điều này — nhưng `parseHikvisionEvent` lại để `parseIsoWithOffset` ném thẳng ra ngoài, tức là đúng cái trường hợp nó vừa nêu. Test cũ còn khoá chặt hành vi đó (`expect(...).toThrow(/dateTime/)`), nên đã phải viết lại test chứ không chỉ sửa code.
+
+**`Number(x) || 0` là cách nhanh nhất để biến dữ liệu hỏng thành một kết luận sai có vẻ hợp lệ.** Parser ATTLOG của Phase 1 đọc mọi cột số bằng công thức đó. Với cột `workCode` thì 0 nghĩa là **PASSWORD** — một firmware gửi rác vì thế không gây lỗi nào cả, nó chỉ âm thầm ghi nhận mọi quẹt thẻ thành quẹt mật khẩu. Nay cột rỗng (hợp lệ — máy thật sự gửi rỗng khi không dùng `jobCode`) khác cột rác (bị đẩy sang `skipped`).
+
+**Thiết bị không giữ được JWT, nhưng endpoint cũng không được mở toang.** Máy chấm công chỉ biết gửi HTTP POST. Nếu webhook không xác thực thì bất kỳ ai biết URL cũng bơm được quẹt giả cho cả công ty — và đó là cách nhanh nhất để phá bảng lương mà không cần đụng vào mã nguồn. Nên mỗi máy một khoá chia sẻ, so bằng `timingSafeEqual` (so `===` dừng ở byte khác biệt đầu tiên nên thời gian trả lời tiết lộ độ dài phần đúng). Và ba lý do từ chối là **ba mã khác nhau** — máy chưa đăng ký / khoá sai / máy đã ngừng dùng — vì đó là ba việc khác nhau người vận hành phải làm.
+
+**Khử trùng lặp bằng ràng buộc DB, không bằng "đọc xem có chưa rồi mới ghi".** Máy ADMS gửi lại toàn bộ log mỗi lần mất mạng, và hai lần gửi có thể đến gần như đồng thời. Cách đọc-rồi-ghi có cửa race: cả hai cùng đọc được "chưa có", rồi cả hai cùng ghi. `uq_raw_punches_once` trên (nhân viên, máy, thời điểm) thì không có cửa nào — lần thứ hai nhận `onConflictDoNothing` và được đếm vào `duplicates`.
+
+**Số thẻ trên máy và mã nhân sự là HAI con số.** Cột `employees.device_user_id` tách khỏi `employee_code` và có **unique index từng phần** (`WHERE device_user_id IS NOT NULL`) — nếu để unique thường thì hai nhân viên văn phòng cùng để trống sẽ xung đột ngay ở dòng thứ hai, trong khi "không dùng máy chấm công" là trạng thái hợp lệ của đa số họ. Số thẻ không khớp ai thì được **nêu lên** trong response chứ không bỏ qua im lặng: một máy vừa nạp lại vân tay với dãy PIN mới sẽ sinh ra hàng trăm quẹt "không biết của ai", và đó là việc phải thấy ngay, không phải ba tuần sau khi bảng lương thiếu người.
 
 **Vì sao kết luận geofence được LƯU chứ không tính lại mỗi lần xem.** Hàng rào là chính sách **có khoảng hiệu lực**. Nếu kết luận được tính lúc hiển thị thì ba tháng sau, một quẹt thẻ cũ sẽ bị đánh giá theo hàng rào MỚI — và kết luận hôm nay khác kết luận đã dùng để quyết định ngày hôm đó. Cùng một quẹt, hai bản án, và không ai biết bản nào đã được dùng. Nên `geo_status` ghi vào `raw_punches` tại thời điểm kiểm tra, cùng nguyên tắc với `policySnapshot` của phiếu lương. Điều đó cũng có nghĩa là một quẹt có thể mang kết luận theo hàng rào đã hết hiệu lực — đó là **đúng**, không phải bug.
 
