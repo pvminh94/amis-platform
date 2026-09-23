@@ -57,6 +57,12 @@ export interface KindDefinition {
   description?: string;
   paramsSchema: Record<string, unknown>;
   roundingMode?: string;
+  /**
+   * true = nhiều thực thể cùng loại được ACTIVE đồng thời (mẫu in, báo cáo).
+   * false = chỉ một bản ACTIVE cho cả loại (tham số luật). Mặc định false —
+   * an toàn hơn: thà chặn nhầm còn hơn để hai biểu thuế cùng hiệu lực.
+   */
+  exclusiveByCode?: boolean;
 }
 
 export async function ensureKind(def: KindDefinition, db: Db = getDb()): Promise<void> {
@@ -75,6 +81,7 @@ export async function ensureKind(def: KindDefinition, db: Db = getDb()): Promise
         description: def.description ?? null,
         paramsSchema: def.paramsSchema,
         roundingMode: def.roundingMode ?? 'HALF_UP_VND',
+        exclusiveByCode: def.exclusiveByCode ?? false,
         updatedAt: new Date(),
       })
       .where(eq(policyKinds.code, def.code));
@@ -122,6 +129,12 @@ export async function resolvePolicy<T>(
   at: string | Date,
   validator: z.ZodType<T>,
   db: Db = getDb(),
+  /**
+   * Lọc theo mã thực thể. BẮT BUỘC với loại `exclusiveByCode` (mẫu in, báo cáo)
+   * vì một loại có nhiều bản ACTIVE cùng lúc — không lọc theo mã thì "bản nào
+   * đang hiệu lực" là câu hỏi không có đáp án duy nhất.
+   */
+  code?: string,
 ): Promise<ResolvedPolicy<T>> {
   const atStr = typeof at === 'string' ? at : at.toISOString().slice(0, 10);
 
@@ -138,6 +151,9 @@ export async function resolvePolicy<T>(
     .where(
       and(
         eq(policyVersions.kindCode, kindCode),
+        // Lọc theo mã NẾU được yêu cầu. Bỏ qua điều kiện này với mẫu in/báo cáo
+        // là lỗi đã từng xảy ra: hệ thống trả về mẫu của người khác.
+        ...(code === undefined ? [] : [eq(policyVersions.code, code)]),
         eq(policyVersions.status, 'ACTIVE'),
         lte(policyVersions.effectiveFrom, atStr),
         or(isNull(policyVersions.effectiveTo), gt(policyVersions.effectiveTo, atStr)),
@@ -237,7 +253,7 @@ export async function createVersion<T>(
   }
 
   const kind = await db
-    .select({ code: policyKinds.code })
+    .select({ code: policyKinds.code, exclusiveByCode: policyKinds.exclusiveByCode })
     .from(policyKinds)
     .where(eq(policyKinds.code, input.kindCode))
     .limit(1);
@@ -245,16 +261,50 @@ export async function createVersion<T>(
     throw new PolicyError('KIND_NOT_FOUND', `Loại chính sách '${input.kindCode}' chưa tồn tại`);
   }
 
+  /**
+   * Mã thực thể lấy từ chính tham số. Mọi schema tham số đều có `regimeCode`,
+   * nên đây là quy ước chứ không phải trường tuỳ chọn.
+   */
+  const code = (parsed.data as { regimeCode?: unknown }).regimeCode;
+  if (typeof code !== 'string' || code === '') {
+    throw new PolicyError(
+      'INVALID_PARAMS',
+      `Tham số của '${input.kindCode}' thiếu 'regimeCode' — không xác định được mã thực thể.`,
+    );
+  }
+
+  /**
+   * Đánh số phiên bản theo ĐÚNG phạm vi độc quyền của loại.
+   *
+   *   tham số luật (exclusiveByCode = false) → theo KIND. Biểu thuế 7 bậc và
+   *     biểu 5 bậc là hai BẢN KẾ TIẾP NHAU của cùng một đạo luật, nên chúng
+   *     phải là v1, v2 — không phải hai chuỗi v1 song song.
+   *   định nghĩa (exclusiveByCode = true) → theo (KIND, CODE). Hai báo cáo khác
+   *     nhau chẳng liên quan gì, mỗi cái có lịch sử riêng bắt đầu ở v1.
+   *
+   * Hai quy tắc này phải khớp nhau. Lần đầu tôi đánh số theo (kind, code) cho
+   * mọi loại và test registry vỡ ngay: ba bản TEST_PIT đều thành v1 nên
+   * resolvePolicy không phân biệt được bản nào mới hơn.
+   */
+  const byCode = kind[0]!.exclusiveByCode;
   const maxRow = await db
     .select({ v: sql<number>`COALESCE(MAX(${policyVersions.version}), 0)` })
     .from(policyVersions)
-    .where(eq(policyVersions.kindCode, input.kindCode));
+    .where(
+      and(
+        eq(policyVersions.kindCode, input.kindCode),
+        ...(byCode ? [eq(policyVersions.code, code)] : []),
+      ),
+    );
   const nextVersion = Number(maxRow[0]?.v ?? 0) + 1;
 
   const [inserted] = await db
     .insert(policyVersions)
     .values({
       kindCode: input.kindCode,
+      code,
+      // Sao chép lên dòng để ràng buộc EXCLUDE đọc được (nó không join được).
+      exclusiveByCode: kind[0]!.exclusiveByCode,
       version: nextVersion,
       status: 'DRAFT',
       effectiveFrom: input.effectiveFrom,
@@ -312,12 +362,17 @@ export async function activateVersion(
 
     // Tìm bản ACTIVE đang chồng lấn khoảng hiệu lực → archive chúng.
     // Dùng chính logic khoảng nửa mở [from, to).
+    //
+    // Với loại độc quyền theo MÃ (mẫu in, báo cáo) thì chỉ đụng tới bản CÙNG MÃ.
+    // Thiếu điều kiện này, kích hoạt mẫu "Bảng chấm công" sẽ archive luôn mẫu
+    // "Phiếu lương" — hai thứ chẳng liên quan gì tới nhau.
     const overlapping = await tx
       .select()
       .from(policyVersions)
       .where(
         and(
           eq(policyVersions.kindCode, target.kindCode),
+          ...(target.exclusiveByCode ? [eq(policyVersions.code, target.code)] : []),
           eq(policyVersions.status, 'ACTIVE'),
           sql`${policyVersions.effectiveFrom}::date < COALESCE(${target.effectiveTo}::date, 'infinity'::date)`,
           sql`COALESCE(${policyVersions.effectiveTo}::date, 'infinity'::date) > ${target.effectiveFrom}::date`,

@@ -84,7 +84,7 @@ export async function buildPayslipPrintData(
   // --- 4. Mẫu in -----------------------------------------------------------
   // resolvePolicy theo mã: mẫu in cũng là chính sách có hiệu lực theo ngày,
   // nên một mẫu cũ vẫn in lại được phiếu lương của kỳ cũ.
-  const templatePolicy = await resolvePolicy('PRINT', at, printParamsSchema, db);
+  const templatePolicy = await resolvePolicy('PRINT', at, printParamsSchema, db, templateCode);
   if (templatePolicy.params.regimeCode !== templateCode) {
     throw new RangeError(
       `Mẫu in đang hiệu lực tại ${at} là '${templatePolicy.params.regimeCode}', ` +
@@ -161,7 +161,13 @@ export async function loadPayslipPrintData(
   const periodEnd = `${run.periodYear}-${String(run.periodMonth).padStart(2, '0')}-${String(
     new Date(run.periodYear, run.periodMonth, 0).getDate(),
   ).padStart(2, '0')}`;
-  const templatePolicy = await resolvePolicy('PRINT', periodEnd, printParamsSchema, db);
+  const templatePolicy = await resolvePolicy(
+    'PRINT',
+    periodEnd,
+    printParamsSchema,
+    db,
+    templateCode,
+  );
   if (templatePolicy.params.regimeCode !== templateCode) {
     throw new RangeError(
       `Mẫu in hiệu lực tại ${periodEnd} là '${templatePolicy.params.regimeCode}', ` +

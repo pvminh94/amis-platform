@@ -33,14 +33,19 @@ const client = new Client({ connectionString: url });
 await client.connect();
 try {
   await client.query(sql);
+  // Kiểm tra CẢ HAI. Chỉ đếm một cái thì cái kia bị xoá cũng không ai biết —
+  // và hệ quả là hai biểu thuế cùng hiệu lực mà không có lỗi nào hiện ra.
   const cons = await client.query(`
-    SELECT conname, contype FROM pg_constraint
-    WHERE conname = 'excl_policy_active_overlap'
+    SELECT conname FROM pg_constraint
+    WHERE conname IN ('excl_policy_active_overlap_by_kind', 'excl_policy_active_overlap_by_code')
+    ORDER BY conname
   `);
-  if (cons.rowCount === 1) {
-    console.log('✓ EXCLUDE constraint excl_policy_active_overlap đã áp dụng');
+  const found = cons.rows.map((r) => r.conname);
+  const expected = ['excl_policy_active_overlap_by_code', 'excl_policy_active_overlap_by_kind'];
+  if (found.join(',') === expected.join(',')) {
+    console.log('✓ 2 ràng buộc EXCLUDE đã áp dụng (by_kind + by_code)');
   } else {
-    console.error('✗ Không tìm thấy constraint sau khi chạy');
+    console.error(`✗ Thiếu ràng buộc. Có: ${found.join(', ') || '(không có)'}`);
     process.exit(1);
   }
 } finally {

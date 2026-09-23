@@ -6,6 +6,7 @@ import { vnSiParamsSchema, vnSiJsonSchema } from '@/policy/si-params';
 import { vnSalaryParamsSchema, vnSalaryJsonSchema } from '@/policy/salary-params';
 import { approvalParamsSchema, approvalJsonSchema } from '@/policy/approval-params';
 import { printParamsSchema, printJsonSchema } from '@/policy/print-params';
+import { reportParamsSchema, reportJsonSchema } from '@/policy/report-params';
 import { ensureKind } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
@@ -55,6 +56,13 @@ const VALIDATORS: Record<
     nameVi: 'Mẫu in',
     schema: printParamsSchema,
     json: printJsonSchema,
+  },
+  // ↓↓↓ Vẫn chỉ MỘT DÒNG cho loại thứ sáu. Không có trang /reports nào được
+  //     viết riêng cho LUONG_THEO_BO_PHAN — form sinh từ reportJsonSchema.
+  REPORT_DEF: {
+    nameVi: 'Định nghĩa báo cáo',
+    schema: reportParamsSchema,
+    json: reportJsonSchema,
   },
 };
 

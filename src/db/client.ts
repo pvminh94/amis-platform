@@ -29,6 +29,19 @@ export function getDb(): Db {
   return db;
 }
 
+/**
+ * Pool thô, cho những query cần THAM SỐ HOÁ ĐỘNG.
+ *
+ * Drizzle giỏi ở chỗ biết schema — nhưng engine báo cáo ghép SQL từ một định
+ * nghĩa JSON lúc chạy, nên nó không có schema để Drizzle dùng. Vẫn phải đi qua
+ * pool để giá trị được bind đúng cách ($1, $2…), chứ không phải nối chuỗi.
+ */
+export function getPool(): Pool {
+  getDb(); // đảm bảo pool đã được tạo
+  if (!pool) throw new Error('Pool chưa được khởi tạo.');
+  return pool;
+}
+
 export async function closeDb(): Promise<void> {
   if (pool) {
     await pool.end();

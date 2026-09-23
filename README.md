@@ -160,6 +160,13 @@ src/app/payroll/…           bảng lương + chi tiết kỳ
 scripts/run-payroll.ts      seed 12 nhân viên + tính kỳ 09/2026
 tests/payroll.spec.ts       15 test: ngày công chuẩn, chặn đầu vào sai
 vitest.config.ts            alias @/ — thiếu file này thì test không import được
+
+src/policy/report-params.ts ★ LOẠI THỨ SÁU: định nghĩa báo cáo (JSON, không SQL)
+src/engine/report.ts        ghép SQL từ whitelist, mọi giá trị qua $1, $2…
+src/app/reports/…           danh sách + chạy báo cáo + xem câu SQL đã sinh
+src/app/api/reports/[code]/ JSON hoặc CSV (có BOM cho Excel)
+scripts/seed-report.ts      seed 2 báo cáo
+tests/report.spec.ts        32 test: tiêm SQL, HAVING, ép kiểu, CSV
 ```
 
 ### Đã kiểm chứng
@@ -171,7 +178,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              229/229 test
+  ✓ vitest              261/261 test
 ```
 
 Test đáng chú ý:
@@ -197,6 +204,7 @@ npm run seed:approval       # seed ngưỡng duyệt
 npm run seed:print          # seed mẫu in
 npm run seed:all            # cả năm loại chính sách
 npm run payroll             # seed 12 nhân viên + tính kỳ 09/2026
+npm run seed:report         # seed 2 báo cáo (cần chạy payroll trước)
 npm run dev                 # giao diện tại http://localhost:3100
 ```
 
@@ -221,7 +229,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **2** | Next.js UI: trang quản lý chính sách, form tự sinh từ JSON Schema | ✅ xong, đã kiểm chứng |
 | **3** | Mở rộng loại chính sách: ~~BHXH~~ ✅ · ~~công thức lương~~ ✅ · ~~ngưỡng duyệt~~ ✅ | ✅ xong, đã kiểm chứng |
 | **4** | Workflow designer (React Flow) + rule engine biểu thức | ⬜ |
-| **5** | ~~Print format~~ ✅ (mẫu in là dữ liệu, render HTML, trình duyệt xuất PDF) · report builder ⬜ | 🔄 phần in xong |
+| **5** | Print format ✅ · report builder ✅ (định nghĩa JSON, engine ghép SQL từ whitelist) | ✅ |
 | **6** | Employee + PayRun thật: bảng `employees`, `payslips`, tính cả kỳ trong một transaction, in phiếu từ số liệu đã lưu | ✅ |
 
 ---
@@ -235,6 +243,16 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Hai quy tắc `@page` là một cái bẫy.** `renderDocument` sinh `@page` theo `paperSize`/`orientation`/`marginMm`; nếu CSS của mẫu cũng khai báo `@page` thì hai quy tắc cascade với nhau và có thể làm mất lề đã cấu hình. Bản in vẫn đẹp trên màn hình, chỉ sai khi in thật — loại lỗi không ai phát hiện cho tới khi kế toán phàn nàn. CSS mẫu seed đã bỏ `@page`, có comment giải thích.
 
 **Không dùng `.default()` trong schema tham số — lần thứ hai.** `.default('')` trên một trường làm kiểu input khác kiểu output, mà `z.ZodType<T>` khai báo `T` cho cả hai, nên mọi chỗ gọi `resolvePolicy` vỡ kiểu. Đã xảy ra với `exemptMealCapMonthly` ở VN_PIT, giờ lặp lại với `expr` ở mẫu in. Thành nguyên tắc: tham số cấu hình không có giá trị ngầm định.
+
+**Hai phạm vi độc quyền, không phải một.** Tham số luật và định nghĩa có bản chất khác nhau: tại một thời điểm chỉ có MỘT biểu thuế TNCN, nhưng phải có NHIỀU mẫu in và báo cáo cùng ACTIVE. Ràng buộc EXCLUDE cũ gộp chung nên kích hoạt báo cáo thứ hai sẽ archive báo cáo thứ nhất. Nay có hai ràng buộc, chọn theo cờ `policy_kinds.exclusive_by_code`, và **đánh số phiên bản cũng theo đúng phạm vi đó** — tham số luật đánh số theo kind (biểu 7 bậc và 5 bậc là hai bản kế tiếp của cùng một đạo luật), định nghĩa đánh số theo (kind, code).
+
+**Định nghĩa báo cáo không bao giờ chứa SQL.** Người dùng chỉ chọn từ `SOURCES` — danh sách cột whitelist; engine ghép câu truy vấn từ những mảnh viết sẵn và mọi GIÁ TRỊ đi qua tham số `$1, $2…`. Cho nhập SQL trực tiếp nghĩa là bất kỳ ai có quyền soạn báo cáo đều có quyền `DROP TABLE`. Engine kiểm tra lại whitelist một lần nữa lúc chạy, vì một định nghĩa có thể được ghi thẳng vào database bằng SQL, bỏ qua API.
+
+**PostgreSQL không cho dùng alias của SELECT trong `HAVING`.** `HAVING THUC_NHAN > $1` nổ với "column thuc_nhan does not exist" dù `THUC_NHAN` có ngay trong SELECT — chỉ `ORDER BY` và `GROUP BY` được tham chiếu alias. Ở `HAVING` phải phát lại `sum(ps.net_pay)`.
+
+**Alias phải bọc nháy kép.** `AS THUC_NHAN` không bọc thì PostgreSQL hạ xuống `thuc_nhan`, và người dùng chọn mã có dấu sẽ nhận về khoá không đoán được.
+
+**Không nối thêm SQL vào một migration đã chạy.** Drizzle không thực thi lại migration đã áp dụng, nên phần nối thêm im lặng không bao giờ chạy. Những ràng buộc Drizzle không diễn đạt được thì đặt ở `extras.sql` — idempotent, chạy mỗi lần `db:setup`.
 
 **In phiếu lương KHÔNG được tính lại.** Khi in một phiếu đã lập, engine không chạy nữa: chính sách trong database có thể đã đổi kể từ khi kỳ đó được tính, và tính lại sẽ cho ra con số khác với con số đã trả cho người lao động. `loadPayslipPrintData` đọc thẳng `payslips.components` và các cột đã lưu; engine chỉ còn dùng cho trường có `expr`, tức là phép cộng trên những con số đã chốt.
 

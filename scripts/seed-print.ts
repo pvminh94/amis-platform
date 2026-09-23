@@ -40,6 +40,8 @@ await ensureKind(
       'Mẫu phiếu lương, bảng chấm công, UNC… dưới dạng HTML + CSS trong database. ' +
       'Dữ liệu luôn được escape để chống XSS.',
     paramsSchema: printJsonSchema,
+    // Nhiều mẫu/báo cáo phải cùng ACTIVE — độc quyền theo mã, không theo loại.
+    exclusiveByCode: true,
   },
   db,
 );

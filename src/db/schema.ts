@@ -93,6 +93,20 @@ export const policyKinds = pgTable('policy_kinds', {
    */
   paramsSchema: jsonb('params_schema').notNull(),
 
+  /**
+   * Phạm vi độc quyền của phiên bản ACTIVE.
+   *
+   *   false — độc quyền theo KIND. Đúng cho THAM SỐ LUẬT: tại một thời điểm chỉ
+   *           có MỘT biểu thuế TNCN có hiệu lực, dù nó mang mã chế độ nào.
+   *   true  — độc quyền theo CODE. Đúng cho ĐỊNH NGHĨA: phải có nhiều mẫu in và
+   *           nhiều báo cáo cùng ACTIVE một lúc (phiếu lương, bảng chấm công,
+   *           UNC…), mỗi cái có lịch sử phiên bản riêng.
+   *
+   * Không có cờ này thì hai mẫu in không thể cùng tồn tại — ràng buộc
+   * EXCLUDE sẽ archive mẫu cũ ngay khi kích hoạt mẫu mới.
+   */
+  exclusiveByCode: boolean('exclusive_by_code').notNull().default(false),
+
   /** Đơn vị tiền tệ / cách làm tròn mặc định cho loại này. */
   roundingMode: varchar('rounding_mode', { length: 20 }).notNull().default('HALF_UP_VND'),
 
@@ -113,8 +127,22 @@ export const policyVersions = pgTable(
       .notNull()
       .references(() => policyKinds.code, { onDelete: 'restrict' }),
 
-    /** Số phiên bản tăng dần trong cùng một loại. */
+    /**
+     * Mã của THỰC THỂ cụ thể trong loại: tên chế độ thuế, mã mẫu in, mã báo cáo.
+     * Lấy từ `params.regimeCode` lúc tạo phiên bản.
+     */
+    code: varchar('code', { length: 64 }).notNull().default(''),
+
+    /** Số phiên bản tăng dần trong cùng một (loại, mã). */
     version: integer('version').notNull(),
+
+    /**
+     * Sao chép từ policy_kinds.exclusive_by_code lúc tạo.
+     *
+     * Phải nằm TRÊN DÒNG NÀY vì ràng buộc EXCLUDE chỉ đọc được cột của chính
+     * bảng nó — không join sang policy_kinds được.
+     */
+    exclusiveByCode: boolean('exclusive_by_code').notNull().default(false),
 
     status: policyStatus('status').notNull().default('DRAFT'),
 
@@ -146,8 +174,19 @@ export const policyVersions = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    // Cùng một loại, số phiên bản không trùng
-    uqKindVersion: unique('uq_policy_kind_version').on(t.kindCode, t.version),
+    // Cùng một (loại, mã), số phiên bản không trùng.
+    // Thêm `code` vào khoá: hai báo cáo khác nhau đều có v1, v2…
+    uqKindCodeVersion: unique('uq_policy_kind_code_version').on(
+      t.kindCode,
+      t.code,
+      t.version,
+    ),
+    // KHÔNG giữ uq_policy_kind_version(kind_code, version).
+    //
+    // Đã thử giữ "cho an toàn" và nó nổ ngay: hai báo cáo khác nhau đều bắt
+    // đầu ở v1 nên (REPORT_DEF, 1) xuất hiện hai lần. Ràng buộc cũ mã hoá đúng
+    // giả định mà cột `code` sinh ra để bỏ — rằng một loại chỉ có một chuỗi
+    // phiên bản. Giữ nó nghĩa là cột code vô dụng.
 
     // Đường tra cứu nóng: resolve theo (kind, status, ngày)
     idxResolve: index('idx_policy_versions_resolve').on(

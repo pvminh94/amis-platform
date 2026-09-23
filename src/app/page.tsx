@@ -32,6 +32,7 @@ export default async function HomePage() {
       <nav className="flex flex-wrap gap-2">
         {[
           ['/payroll', 'Bảng lương', 'Kỳ lương đã tính và phiếu của từng người'],
+          ['/reports', 'Báo cáo', 'Định nghĩa JSON trong database, không chứa SQL'],
           ['/print', 'Mẫu in', 'HTML/CSS là dữ liệu — sửa mẫu không cần deploy'],
         ].map(([href, label, hint]) => (
           <a
