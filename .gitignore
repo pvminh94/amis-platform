@@ -2,7 +2,12 @@ node_modules/
 dist/
 .env
 .env.*
+# Hai file MẪU phải được commit: chúng không chứa bí mật, chỉ chứa chỗ trống
+# cần điền. .env.docker.example từng bị dòng `.env.*` ở trên nuốt mất — file có
+# trên đĩa máy dev nhưng không vào git, nên ai clone repo sẽ không có nó trong
+# khi docs/deployment.md bảo họ `cp .env.docker.example .env`.
 !.env.example
+!.env.docker.example
 drizzle/meta/
 *.log
 .next/
