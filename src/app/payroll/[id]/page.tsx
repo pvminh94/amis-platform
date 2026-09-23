@@ -1,8 +1,10 @@
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
+import { isUuid } from '@/lib/uuid';
 import { getDb } from '@/db/client';
 import { employees, payslips, payRuns } from '@/db/schema';
 import { Badge, Card, Alert } from '@/components/ui';
+import { PayRunSubmit } from '@/components/pay-run-submit';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,6 +16,7 @@ export default async function PayRunDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  if (!isUuid(id)) notFound();
   const db = getDb();
 
   const [run] = await db.select().from(payRuns).where(eq(payRuns.id, id)).limit(1);
@@ -128,10 +131,23 @@ export default async function PayRunDetailPage({
         </p>
       </Card>
 
-      {run.status === 'DRAFT' && (
+      {run.status === 'DRAFT' ? (
+        <Card className="mt-4">
+          <div className="mb-2 text-sm font-medium">Nộp ra duyệt</div>
+          <p className="mb-3 text-xs text-[var(--muted)]">
+            Chuỗi duyệt lấy từ loại chính sách <strong>APPROVAL</strong> theo tổng
+            thực nhận của kỳ, và được chụp lại vào đơn — đổi ngưỡng sau đó không
+            ảnh hưởng đơn đang duyệt dở.
+          </p>
+          <PayRunSubmit payRunId={run.id} label="kỳ này" />
+        </Card>
+      ) : (
         <Alert tone="info">
-          Kỳ này đang ở trạng thái <strong>DRAFT</strong>. Chưa có cơ chế duyệt
-          và khoá (LOCK) — đó là phần workflow của Phase 4.
+          Kỳ này đang ở trạng thái <strong>{run.status}</strong>. Xem dấu vết tại{' '}
+          <a href="/approvals" className="underline">
+            Đơn xin duyệt
+          </a>
+          .
         </Alert>
       )}
     </main>

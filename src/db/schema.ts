@@ -429,3 +429,107 @@ export const payslips = pgTable(
     ),
   }),
 );
+
+// ---------------------------------------------------------------------------
+// ĐƠN XIN DUYỆT + AUDIT TRAIL (Phase 4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Một đơn xin duyệt. Đa hình: `docType` + `docRef` trỏ tới tài liệu gốc
+ * (kỳ lương, đơn nghỉ, phiếu chi…) mà không cần một bảng cho mỗi loại.
+ */
+export const approvalRequests = pgTable(
+  'approval_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    /** PAYRUN | LEAVE | EXPENSE | REGULARIZATION | BUSINESS_TRIP … */
+    docType: varchar('doc_type', { length: 40 }).notNull(),
+    /** id của tài liệu gốc. Không FK vì mỗi loại nằm ở một bảng khác. */
+    docRef: uuid('doc_ref').notNull(),
+    /** Nhãn hiển thị, ví dụ "Bảng lương 09/2026". */
+    docLabel: varchar('doc_label', { length: 200 }).notNull(),
+
+    /**
+     * Số tiền của đơn — dùng cho ngưỡng duyệt. NULL với đơn không có tiền
+     * (nghỉ phép tính bằng ngày). KHÔNG mặc định 0: một đơn thiếu tiền mà
+     * thành 0 đồng sẽ lọt qua mọi ngưỡng.
+     */
+    amount: integer('amount'),
+
+    /**
+     * Ngữ cảnh để đánh giá điều kiện bước (days, hours, type, amount…).
+     * Engine đọc thẳng object này.
+     */
+    context: jsonb('context').notNull(),
+
+    /**
+     * CHUỖI DUYỆT ĐÃ PHÂN GIẢI, chụp lúc nộp đơn.
+     *
+     * Bắt buộc phải chụp. Nếu đọc lại từ chính sách APPROVAL mỗi lần hiển thị,
+     * một thay đổi ngưỡng giữa chừng sẽ đổi số bước của một đơn đang duyệt dở —
+     * đơn đang ở "bước 2/3" bỗng thành "bước 2/2" và tự chốt.
+     */
+    chain: jsonb('chain').notNull(),
+    /** Bộ tham số đã dùng để dựng chuỗi — để đối chiếu sau này. */
+    policySnapshot: jsonb('policy_snapshot').notNull(),
+
+    state: varchar('state', { length: 20 }).notNull().default('DRAFT'),
+    /** Bước hiện tại, 0-based. */
+    currentStep: integer('current_step').notNull().default(0),
+    totalSteps: integer('total_steps').notNull(),
+
+    requestedBy: varchar('requested_by', { length: 100 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    // Một tài liệu chỉ có một đơn duyệt. Hai đơn song song cho cùng một kỳ
+    // lương thì không biết cái nào có giá trị.
+    uqDoc: unique('uq_approval_requests_doc').on(t.docType, t.docRef),
+    idxState: index('idx_approval_requests_state').on(t.state),
+    chkState: check(
+      'chk_approval_requests_state',
+      sql`${t.state} IN ('DRAFT','SUBMITTED','PENDING_APPROVAL','APPROVED','REJECTED','CANCELLED','RETURNED')`,
+    ),
+    chkSteps: check(
+      'chk_approval_requests_steps',
+      sql`${t.totalSteps} >= 1 AND ${t.currentStep} >= 0 AND ${t.currentStep} <= ${t.totalSteps}`,
+    ),
+    chkAmount: check('chk_approval_requests_amount', sql`${t.amount} IS NULL OR ${t.amount} >= 0`),
+  }),
+);
+
+/**
+ * Audit trail — CHỈ CÓ INSERT.
+ *
+ * Bất biến được ép ở TẦNG DATABASE bằng trigger trong extras.sql, không chỉ
+ * bằng quy ước trong code. Một audit trail mà ai có quyền DB cũng sửa được thì
+ * không phải audit trail.
+ */
+export const approvalAudit = pgTable(
+  'approval_audit',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requestId: uuid('request_id')
+      .notNull()
+      .references(() => approvalRequests.id, { onDelete: 'cascade' }),
+
+    action: varchar('action', { length: 20 }).notNull(),
+    fromStatus: varchar('from_status', { length: 20 }).notNull(),
+    toStatus: varchar('to_status', { length: 20 }).notNull(),
+    step: integer('step'),
+
+    actorId: varchar('actor_id', { length: 100 }),
+    actorName: varchar('actor_name', { length: 200 }),
+    actorRole: varchar('actor_role', { length: 60 }),
+    comment: text('comment'),
+
+    ipAddress: varchar('ip_address', { length: 45 }).notNull(),
+    userAgent: text('user_agent'),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxRequest: index('idx_approval_audit_request').on(t.requestId),
+  }),
+);

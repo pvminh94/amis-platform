@@ -33,6 +33,7 @@ export default async function HomePage() {
         {[
           ['/payroll', 'Bảng lương', 'Kỳ lương đã tính và phiếu của từng người'],
           ['/reports', 'Báo cáo', 'Định nghĩa JSON trong database, không chứa SQL'],
+          ['/approvals', 'Đơn xin duyệt', 'Ngưỡng là dữ liệu, máy trạng thái là code'],
           ['/print', 'Mẫu in', 'HTML/CSS là dữ liệu — sửa mẫu không cần deploy'],
         ].map(([href, label, hint]) => (
           <a

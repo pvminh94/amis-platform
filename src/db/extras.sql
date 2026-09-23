@@ -70,3 +70,32 @@ COMMENT ON CONSTRAINT excl_policy_active_overlap_by_kind ON policy_versions IS
   'Tham so luat: hai ban ACTIVE cung loai khong duoc chong lan [from, to)';
 COMMENT ON CONSTRAINT excl_policy_active_overlap_by_code ON policy_versions IS
   'Mau in / bao cao: hai ban ACTIVE cung (loai, ma) khong duoc chong lan [from, to)';
+
+
+-- ---------------------------------------------------------------------------
+-- AUDIT TRAIL DUYỆT: CHỈ INSERT
+-- ---------------------------------------------------------------------------
+--
+-- Bất biến ép ở tầng DATABASE, không chỉ bằng quy ước trong code. Một audit
+-- trail mà ai có quyền DB cũng UPDATE được thì không trả lời được câu hỏi duy
+-- nhất nó tồn tại để trả lời: "ai đã duyệt cái này".
+--
+-- Lưu ý: xoá cả đơn (approval_requests) vẫn kéo theo xoá audit qua ON DELETE
+-- CASCADE. Đó là có chủ ý — xoá đơn là nghiệp vụ hợp lệ, sửa lịch sử thì không.
+
+CREATE OR REPLACE FUNCTION trg_approval_audit_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'approval_audit chỉ cho phép INSERT: không được % một bản ghi audit', TG_OP;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS approval_audit_no_update ON approval_audit;
+CREATE TRIGGER approval_audit_no_update
+  BEFORE UPDATE ON approval_audit
+  FOR EACH ROW EXECUTE FUNCTION trg_approval_audit_immutable();
+
+DROP TRIGGER IF EXISTS approval_audit_no_delete ON approval_audit;
+CREATE TRIGGER approval_audit_no_delete
+  BEFORE DELETE ON approval_audit
+  FOR EACH ROW EXECUTE FUNCTION trg_approval_audit_immutable();

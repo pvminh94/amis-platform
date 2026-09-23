@@ -167,6 +167,14 @@ src/app/reports/…           danh sách + chạy báo cáo + xem câu SQL đã 
 src/app/api/reports/[code]/ JSON hoặc CSV (có BOM cho Excel)
 scripts/seed-report.ts      seed 2 báo cáo
 tests/report.spec.ts        32 test: tiêm SQL, HAVING, ép kiểu, CSV
+
+src/engine/workflow.ts      ★ MÁY TRẠNG THÁI DUYỆT (port từ Phase 1, đã sửa 1 lỗ hổng)
+src/lib/approval.ts         nối ngưỡng (dữ liệu) với trạng thái (code)
+src/lib/uuid.ts             chặn id rác trước khi chạm PostgreSQL
+src/app/approvals/…         danh sách đơn, chuỗi duyệt, nút hành động, dấu vết
+src/app/api/approvals/[id]/ thực hiện một hành động duyệt
+scripts/approval-flow.ts    chạy thử end-to-end + kiểm tra trigger bất biến
+tests/workflow.spec.ts      52 test: state machine, điều kiện, audit, IP
 ```
 
 ### Đã kiểm chứng
@@ -178,7 +186,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              261/261 test
+  ✓ vitest              313/313 test
 ```
 
 Test đáng chú ý:
@@ -205,6 +213,7 @@ npm run seed:print          # seed mẫu in
 npm run seed:all            # cả năm loại chính sách
 npm run payroll             # seed 12 nhân viên + tính kỳ 09/2026
 npm run seed:report         # seed 2 báo cáo (cần chạy payroll trước)
+npm run demo:approval       # chạy thử quy trình duyệt end-to-end
 npm run dev                 # giao diện tại http://localhost:3100
 ```
 
@@ -228,7 +237,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **1** | Policy Registry + engine thuế | ✅ xong, đã kiểm chứng |
 | **2** | Next.js UI: trang quản lý chính sách, form tự sinh từ JSON Schema | ✅ xong, đã kiểm chứng |
 | **3** | Mở rộng loại chính sách: ~~BHXH~~ ✅ · ~~công thức lương~~ ✅ · ~~ngưỡng duyệt~~ ✅ | ✅ xong, đã kiểm chứng |
-| **4** | Workflow designer (React Flow) + rule engine biểu thức | ⬜ |
+| **4** | ~~Workflow designer~~ ✅ máy trạng thái + chuỗi duyệt chụp lúc nộp + audit trail bất biến bằng trigger + UI | ✅ |
 | **5** | Print format ✅ · report builder ✅ (định nghĩa JSON, engine ghép SQL từ whitelist) | ✅ |
 | **6** | Employee + PayRun thật: bảng `employees`, `payslips`, tính cả kỳ trong một transaction, in phiếu từ số liệu đã lưu | ✅ |
 
@@ -243,6 +252,16 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Hai quy tắc `@page` là một cái bẫy.** `renderDocument` sinh `@page` theo `paperSize`/`orientation`/`marginMm`; nếu CSS của mẫu cũng khai báo `@page` thì hai quy tắc cascade với nhau và có thể làm mất lề đã cấu hình. Bản in vẫn đẹp trên màn hình, chỉ sai khi in thật — loại lỗi không ai phát hiện cho tới khi kế toán phàn nàn. CSS mẫu seed đã bỏ `@page`, có comment giải thích.
 
 **Không dùng `.default()` trong schema tham số — lần thứ hai.** `.default('')` trên một trường làm kiểu input khác kiểu output, mà `z.ZodType<T>` khai báo `T` cho cả hai, nên mọi chỗ gọi `resolvePolicy` vỡ kiểu. Đã xảy ra với `exemptMealCapMonthly` ở VN_PIT, giờ lặp lại với `expr` ở mẫu in. Thành nguyên tắc: tham số cấu hình không có giá trị ngầm định.
+
+**Ngưỡng duyệt là dữ liệu, máy trạng thái là code.** "Chi trên 200 triệu cần CEO" sửa được trên giao diện. Còn "đơn APPROVED không quay lại PENDING" thì không — cho sửa bảng chuyển trạng thái trên UI thì ai cũng tự duyệt được đơn của mình bằng cách đổi luật. Ba trạng thái cuối có bảng chuyển RỖNG, và test duyệt đồ thị để khẳng định không có đường nào thoát ra.
+
+**Chuỗi duyệt được CHỤP lúc nộp đơn.** Nếu đọc lại từ chính sách mỗi lần hiển thị, một thay đổi ngưỡng giữa chừng sẽ đổi số bước của đơn đang duyệt dở — đơn "bước 2/3" bỗng thành "bước 2/2" và tự chốt ở lần duyệt kế tiếp.
+
+**Audit trail bất biến được ép ở TẦNG DATABASE.** Trigger chặn UPDATE và DELETE trên `approval_audit`. Một audit trail mà ai có quyền DB cũng sửa được thì không trả lời được câu hỏi duy nhất nó tồn tại để trả lời: "ai đã duyệt cái này". `npm run demo:approval` thử sửa và thử xoá, cả hai đều bị chặn.
+
+**Một lỗ hổng trong bản Phase 1 đã sửa khi port.** `evaluateCondition` đọc `ctx[field]` rồi so sánh trực tiếp; trường thiếu thì `Number(undefined)` là `NaN` và `NaN > 5` là `false` — bước duyệt bị BỎ QUA trong im lặng. Một đơn chi 500 triệu thiếu trường `amount` sẽ đi thẳng qua bước CEO. Cùng họ lỗi với `onMissingVar: 'zero'`. Nay mặc định là NÉM LỖI. Ranh giới dễ nhầm: **0 không phải là thiếu** — một đơn 0 đồng là đơn hợp lệ.
+
+**Kiểm tra UUID trước khi truy vấn.** `/approvals/khong-ton-tai` từng trả 500 vì PostgreSQL ném `22P02` trước khi `notFound()` kịp chạy. 500 nghĩa là "server hỏng", 404 nghĩa là "không có cái đó" — và log 500 sẽ che mất lỗi thật.
 
 **Hai phạm vi độc quyền, không phải một.** Tham số luật và định nghĩa có bản chất khác nhau: tại một thời điểm chỉ có MỘT biểu thuế TNCN, nhưng phải có NHIỀU mẫu in và báo cáo cùng ACTIVE. Ràng buộc EXCLUDE cũ gộp chung nên kích hoạt báo cáo thứ hai sẽ archive báo cáo thứ nhất. Nay có hai ràng buộc, chọn theo cờ `policy_kinds.exclusive_by_code`, và **đánh số phiên bản cũng theo đúng phạm vi đó** — tham số luật đánh số theo kind (biểu 7 bậc và 5 bậc là hai bản kế tiếp của cùng một đạo luật), định nghĩa đánh số theo (kind, code).
 
