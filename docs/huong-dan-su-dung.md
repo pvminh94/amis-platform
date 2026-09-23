@@ -178,24 +178,49 @@ psql --version
 
 ```bash
 sudo -u postgres psql <<'SQL'
-CREATE USER amis WITH PASSWORD 'doi-mat-khau-that-manh';
+CREATE USER amis WITH PASSWORD 'THAY_BANG_MAT_KHAU_CUA_BAN';
 CREATE DATABASE amis_platform OWNER amis;
 SQL
 ```
 
-> `doi-mat-khau-that-manh` ở đây là **chỗ để bạn điền mật khẩu thật**, không phải
+> `THAY_BANG_MAT_KHAU_CUA_BAN` ở đây là **chỗ để bạn điền mật khẩu thật**, không phải
 > chuỗi nên gõ nguyên văn. Nhớ dùng **đúng mật khẩu đó** trong `DATABASE_URL` ở
 > Bước 3.
 
 Kiểm tra nối được **bằng chính user `amis`** (không phải `postgres`):
 
 ```bash
-psql "postgresql://amis:doi-mat-khau-that-manh@127.0.0.1:5432/amis_platform" -c 'select 1;'
+psql "postgresql://amis:THAY_BANG_MAT_KHAU_CUA_BAN@127.0.0.1:5432/amis_platform" -c 'select 1;'
 # kỳ vọng in ra một dòng có số 1
 ```
 
 Nếu báo `password authentication failed`: sửa `pg_hba.conf` để cho phép `scram-sha-256`
 qua TCP, rồi `sudo systemctl reload postgresql`.
+
+> **Lỡ gõ nguyên văn `THAY_BANG_MAT_KHAU_CUA_BAN`?** Không sao, đổi lại được:
+> ```bash
+> sudo -u postgres psql -c "ALTER USER amis WITH PASSWORD 'mật-khẩu-thật';"
+> ```
+> Rồi sửa `DATABASE_URL` cho khớp. Nếu mật khẩu có ký tự đặc biệt (`@ : / # %`)
+> thì phải **URL-encode** trong `DATABASE_URL` — ví dụ `p@ss` thành `p%40ss`.
+> Thiếu bước này sẽ báo "password authentication failed" dù mật khẩu đúng.
+
+**Hai mật khẩu khác nhau, đừng nhầm:**
+
+| Mật khẩu | Của cái gì |
+|---|---|
+| PostgreSQL (mục này) | user `amis` trong database |
+| Đăng nhập app (mục 4) | user `admin`, `hr.admin`… — seed là `Amis@2026!` |
+
+**Trên VPS, kiểm tra DB không mở ra internet:**
+
+```bash
+sudo -u postgres psql -c "SHOW listen_addresses;"
+# kỳ vọng: localhost — chỉ máy đó vào được
+```
+
+Nếu ra `*` thì phải chặn ở firewall: một database lương mở ra internet là sự cố
+nghiêm trọng, không phải chuyện cấu hình.
 
 #### 2d. (Cách khác) Không cài Postgres, dùng Docker
 
@@ -212,7 +237,7 @@ Mở `.env` và điền **đủ 3 biến**:
 
 ```bash
 # Chuỗi nối PostgreSQL. ĐỔI MẬT KHẨU.
-DATABASE_URL=postgresql://amis:doi-mat-khau-that-manh@127.0.0.1:5432/amis_platform
+DATABASE_URL=postgresql://amis:THAY_BANG_MAT_KHAU_CUA_BAN@127.0.0.1:5432/amis_platform
 
 # Bí mật ký JWT (HS256), tối thiểu 32 ký tự. Sinh bằng:
 #   openssl rand -base64 48
