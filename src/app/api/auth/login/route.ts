@@ -15,20 +15,9 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/db/client';
 import { login, checkRateLimit, AuthError } from '@/lib/auth';
 import { extractClientIp } from '@/engine/workflow';
+import { refreshCookie } from '@/lib/cookies';
 
 export const dynamic = 'force-dynamic';
-
-/** Cookie refresh: HttpOnly + SameSite=Lax + Secure khi chạy HTTPS. */
-export function refreshCookie(token: string, maxAgeDays = 14, secure = true) {
-  return [
-    `refresh_token=${token}`,
-    'HttpOnly',
-    'Path=/api/auth',
-    `Max-Age=${maxAgeDays * 86_400}`,
-    'SameSite=Lax',
-    ...(secure ? ['Secure'] : []),
-  ].join('; ');
-}
 
 export async function POST(req: Request) {
   const headers: Record<string, string | undefined> = {};
