@@ -1,0 +1,93 @@
+/**
+ * POST /api/auth/login
+ *
+ * Trả access token trong BODY (để client gắn vào Authorization header) và
+ * refresh token trong COOKIE HttpOnly.
+ *
+ * Vì sao tách đôi:
+ *   - Access token phải đọc được bằng JS thì mới gắn vào header được. Nó sống
+ *     15 phút nên bị lộ qua XSS cũng chỉ có 15 phút.
+ *   - Refresh token KHÔNG BAO GIỜ được JS đọc (HttpOnly) — đó là thứ sống 14
+ *     ngày. Để nó trong body nghĩa là một lỗ XSS lấy được phiên 14 ngày.
+ */
+
+import { NextResponse } from 'next/server';
+import { getDb } from '@/db/client';
+import { login, checkRateLimit, AuthError } from '@/lib/auth';
+import { extractClientIp } from '@/engine/workflow';
+
+export const dynamic = 'force-dynamic';
+
+/** Cookie refresh: HttpOnly + SameSite=Lax + Secure khi chạy HTTPS. */
+export function refreshCookie(token: string, maxAgeDays = 14, secure = true) {
+  return [
+    `refresh_token=${token}`,
+    'HttpOnly',
+    'Path=/api/auth',
+    `Max-Age=${maxAgeDays * 86_400}`,
+    'SameSite=Lax',
+    ...(secure ? ['Secure'] : []),
+  ].join('; ');
+}
+
+export async function POST(req: Request) {
+  const headers: Record<string, string | undefined> = {};
+  req.headers.forEach((v, k) => {
+    headers[k] = v;
+  });
+  const ip = extractClientIp(headers);
+  const db = getDb();
+
+  // Giới hạn theo IP: 10 lần / phút. Theo IP chứ không theo tên đăng nhập —
+  // nếu khoá theo tên đăng nhập thì kẻ tấn công chỉ cần gõ sai mật khẩu của
+  // nạn nhân để khoá nạn nhân ra khỏi hệ thống.
+  const rl = await checkRateLimit(`login:${ip}`, 10, 60_000, db);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: { code: 'RATE_LIMITED', message: 'Quá nhiều lần thử. Vui lòng chờ.' } },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
+    );
+  }
+
+  let body: { username?: string; password?: string };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    return NextResponse.json(
+      { error: { code: 'BAD_JSON', message: 'Body không phải JSON hợp lệ.' } },
+      { status: 400 },
+    );
+  }
+
+  if (!body.username || !body.password) {
+    return NextResponse.json(
+      { error: { code: 'MISSING_FIELD', message: 'Thiếu username hoặc password.' } },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const result = await login(body.username, body.password, { ip, userAgent: headers['user-agent'] }, db);
+    const secure = new URL(req.url).protocol === 'https:';
+    return NextResponse.json(
+      {
+        user: result.user,
+        accessToken: result.accessToken,
+        // expiresIn để client biết khi nào cần làm mới, thay vì đoán.
+        expiresIn: 900,
+      },
+      {
+        headers: { 'Set-Cookie': refreshCookie(result.refreshToken, 14, secure) },
+      },
+    );
+  } catch (e) {
+    const code = e instanceof AuthError ? e.code : 'AUTH_FAILED';
+    // 401 cho sai thông tin, 423 (Locked) cho tài khoản bị khoá — hai tình
+    // huống cần hai cách xử lý khác nhau ở client.
+    const status = code === 'ACCOUNT_LOCKED' ? 423 : code === 'ACCOUNT_DISABLED' ? 403 : 401;
+    return NextResponse.json(
+      { error: { code, message: e instanceof Error ? e.message : String(e) } },
+      { status },
+    );
+  }
+}

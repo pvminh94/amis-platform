@@ -175,6 +175,14 @@ src/app/approvals/…         danh sách đơn, chuỗi duyệt, nút hành đ�
 src/app/api/approvals/[id]/ thực hiện một hành động duyệt
 scripts/approval-flow.ts    chạy thử end-to-end + kiểm tra trigger bất biến
 tests/workflow.spec.ts      52 test: state machine, điều kiện, audit, IP
+
+src/engine/auth.ts          ★ bcrypt salt 10, JWT (jose), băm refresh token
+src/lib/auth.ts             login, xoay vòng token, RBAC, rate limit trong DB
+src/middleware.ts           security headers (thay helmet) + CORS whitelist
+src/app/api/auth/…          login / refresh / logout, refresh trong cookie HttpOnly
+scripts/seed-auth.ts        14 quyền, 5 vai trò, 6 người dùng
+scripts/auth-flow.ts        32 kiểm tra end-to-end
+tests/auth.spec.ts          32 test: các đường tấn công JWT, bcrypt, so sánh thời gian
 ```
 
 ### Đã kiểm chứng
@@ -186,7 +194,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              313/313 test
+  ✓ vitest              345/345 test
 ```
 
 Test đáng chú ý:
@@ -214,6 +222,8 @@ npm run seed:all            # cả năm loại chính sách
 npm run payroll             # seed 12 nhân viên + tính kỳ 09/2026
 npm run seed:report         # seed 2 báo cáo (cần chạy payroll trước)
 npm run demo:approval       # chạy thử quy trình duyệt end-to-end
+npm run seed:auth           # 14 quyền, 5 vai trò, 6 người dùng
+npm run demo:auth           # 32 kiểm tra luồng xác thực + RBAC
 npm run dev                 # giao diện tại http://localhost:3100
 ```
 
@@ -240,6 +250,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **4** | ~~Workflow designer~~ ✅ máy trạng thái + chuỗi duyệt chụp lúc nộp + audit trail bất biến bằng trigger + UI | ✅ |
 | **5** | Print format ✅ · report builder ✅ (định nghĩa JSON, engine ghép SQL từ whitelist) | ✅ |
 | **6** | Employee + PayRun thật: bảng `employees`, `payslips`, tính cả kỳ trong một transaction, in phiếu từ số liệu đã lưu | ✅ |
+| **7** | JWT + refresh HttpOnly có xoay vòng, bcrypt salt 10, RBAC 2 tầng (quyền + phạm vi dữ liệu), rate limit trong DB, security headers | ✅ |
 
 ---
 
@@ -252,6 +263,18 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Hai quy tắc `@page` là một cái bẫy.** `renderDocument` sinh `@page` theo `paperSize`/`orientation`/`marginMm`; nếu CSS của mẫu cũng khai báo `@page` thì hai quy tắc cascade với nhau và có thể làm mất lề đã cấu hình. Bản in vẫn đẹp trên màn hình, chỉ sai khi in thật — loại lỗi không ai phát hiện cho tới khi kế toán phàn nàn. CSS mẫu seed đã bỏ `@page`, có comment giải thích.
 
 **Không dùng `.default()` trong schema tham số — lần thứ hai.** `.default('')` trên một trường làm kiểu input khác kiểu output, mà `z.ZodType<T>` khai báo `T` cho cả hai, nên mọi chỗ gọi `resolvePolicy` vỡ kiểu. Đã xảy ra với `exemptMealCapMonthly` ở VN_PIT, giờ lặp lại với `expr` ở mẫu in. Thành nguyên tắc: tham số cấu hình không có giá trị ngầm định.
+
+**Refresh token lưu DẠNG HASH, và có phát hiện tái sử dụng.** Rò rỉ bảng `refresh_tokens` thì kẻ tấn công vẫn không đăng nhập được — đúng lý do ta băm mật khẩu. Mỗi lần refresh sinh token mới và thu hồi token cũ; nếu một token đã thu hồi được trình ra lần nữa thì thu hồi CẢ HỌ token. Không có cái này, một refresh token bị lộ sẽ sống suốt 14 ngày mà không ai biết.
+
+**Access token trong body, refresh token trong cookie HttpOnly.** Access phải đọc được bằng JS thì mới gắn vào Authorization header, và nó chỉ sống 15 phút. Refresh không bao giờ được JS đọc — để nó trong body nghĩa là một lỗ XSS lấy được phiên 14 ngày.
+
+**Thông báo đăng nhập sai cố tình mơ hồ.** "Sai tên đăng nhập hoặc mật khẩu" cho cả hai trường hợp, và vẫn băm một mật khẩu giả khi tài khoản không tồn tại — nếu không, thời gian phản hồi sẽ khác nhau và đó cũng là một cách liệt kê tài khoản. Rate limit theo IP chứ không theo tên đăng nhập: khoá theo tên đăng nhập thì kẻ tấn công chỉ cần gõ sai mật khẩu của nạn nhân để khoá nạn nhân ra.
+
+**Rate limit trong DATABASE, không phải bộ nhớ.** In-memory reset mỗi lần restart và vô dụng khi chạy nhiều tiến trình — với một cơ chế an ninh thì "reset khi restart" chính là một lỗ.
+
+**RBAC hai tầng.** QUYỀN trả lời "được làm gì", PHẠM VI trả lời "trên dữ liệu của ai". Cùng quyền `payroll:read` nhưng trưởng phòng chỉ thấy phòng mình. Gộp hai thứ vào một bảng quyền sẽ sinh ra tổ hợp nổ (mỗi quyền × mỗi phòng). Mặc định là TỪ CHỐI.
+
+**Không tự sinh JWT secret.** `requireJwtSecret` NÉM nếu thiếu hoặc ngắn hơn 32 ký tự. Secret sinh lúc chạy nghĩa là mọi token mất hiệu lực mỗi lần restart, và trên nhiều tiến trình thì mỗi tiến trình một secret. Test chốt cả `alg=none`, đổi alg, sai issuer/audience, và token bị sửa payload.
 
 **Ngưỡng duyệt là dữ liệu, máy trạng thái là code.** "Chi trên 200 triệu cần CEO" sửa được trên giao diện. Còn "đơn APPROVED không quay lại PENDING" thì không — cho sửa bảng chuyển trạng thái trên UI thì ai cũng tự duyệt được đơn của mình bằng cách đổi luật. Ba trạng thái cuối có bảng chuyển RỖNG, và test duyệt đồ thị để khẳng định không có đường nào thoát ra.
 

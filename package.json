@@ -20,15 +20,19 @@
     "seed:bhxh": "tsx scripts/seed-bhxh.ts",
     "seed:salary": "tsx scripts/seed-salary.ts",
     "seed:approval": "tsx scripts/seed-approval.ts",
-    "seed:all": "npm run demo && npm run seed:bhxh && npm run seed:salary && npm run seed:approval && npm run seed:print && npm run seed:report",
+    "seed:all": "npm run demo && npm run seed:bhxh && npm run seed:salary && npm run seed:approval && npm run seed:print && npm run seed:report && npm run seed:auth",
     "seed:print": "tsx scripts/seed-print.ts",
     "payroll": "tsx scripts/run-payroll.ts",
     "seed:report": "tsx scripts/seed-report.ts",
-    "demo:approval": "tsx scripts/approval-flow.ts"
+    "demo:approval": "tsx scripts/approval-flow.ts",
+    "seed:auth": "tsx scripts/seed-auth.ts",
+    "demo:auth": "tsx scripts/auth-flow.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",
+    "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.36.4",
+    "jose": "^6.2.12",
     "next": "^15.5.26",
     "pg": "^8.13.1",
     "postcss": "^8.5.28",

@@ -533,3 +533,191 @@ export const approvalAudit = pgTable(
     idxRequest: index('idx_approval_audit_request').on(t.requestId),
   }),
 );
+
+// ===========================================================================
+// AUTH + RBAC (Phase 7)
+// ===========================================================================
+
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    username: varchar('username', { length: 60 }).notNull(),
+    /**
+     * bcrypt, salt 10.
+     *
+     * Salt 10 là đánh đổi có ý thức: ~100ms mỗi lần băm trên phần cứng hiện
+     * đại — đủ chậm để brute-force đắt, đủ nhanh để đăng nhập không khó chịu.
+     * Tăng lên 12 sẽ nhân bốn thời gian và làm nghẽn luồng đăng nhập khi có
+     * burst; nếu cần mạnh hơn thì đổi thuật toán (argon2id) chứ không tăng salt.
+     */
+    passwordHash: varchar('password_hash', { length: 100 }).notNull(),
+    fullName: varchar('full_name', { length: 120 }).notNull(),
+    email: varchar('email', { length: 200 }),
+    department: varchar('department', { length: 120 }),
+    branch: varchar('branch', { length: 120 }),
+
+    active: boolean('active').notNull().default(true),
+    /** Bắt buộc đổi mật khẩu ở lần đăng nhập kế (tài khoản do admin tạo). */
+    mustChangePassword: boolean('must_change_password').notNull().default(false),
+
+    /**
+     * Khoá tài khoản sau nhiều lần sai mật khẩu.
+     *
+     * Không có cái này thì bcrypt salt 10 cũng không cứu được: kẻ tấn công thử
+     * online với tốc độ mạng, không phải tốc độ băm.
+     */
+    failedAttempts: integer('failed_attempts').notNull().default(0),
+    lockedUntil: timestamp('locked_until', { withTimezone: true }),
+
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uqUsername: unique('uq_users_username').on(t.username),
+    chkFailed: check('chk_users_failed', sql`${t.failedAttempts} >= 0`),
+  }),
+);
+
+export const roles = pgTable('roles', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  code: varchar('code', { length: 60 }).notNull().unique(),
+  nameVi: varchar('name_vi', { length: 120 }).notNull(),
+  description: text('description'),
+  /**
+   * Vai trò hệ thống không xoá được. ADMIN mà xoá được thì một lần bấm nhầm
+   * sẽ khoá mọi người ở ngoài, kể cả chính mình.
+   */
+  isSystem: boolean('is_system').notNull().default(false),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Quyền theo dạng `vùng:hành động` — vd `payroll:run`, `policy:activate`.
+ *
+ * Dạng phẳng có chủ ý. Cây quyền phân cấp nghe sang nhưng sinh ra những câu
+ * hỏi không có đáp án rõ ràng ("policy:read có kéo theo payroll:read không?"),
+ * và mỗi lần thêm một quyền mới lại phải nghĩ lại cả cây.
+ */
+export const permissions = pgTable('permissions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  code: varchar('code', { length: 80 }).notNull().unique(),
+  nameVi: varchar('name_vi', { length: 160 }).notNull(),
+  description: text('description'),
+});
+
+export const rolePermissions = pgTable(
+  'role_permissions',
+  {
+    roleId: uuid('role_id')
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+    permissionId: uuid('permission_id')
+      .notNull()
+      .references(() => permissions.id, { onDelete: 'cascade' }),
+  },
+  (t) => ({
+    pk: unique('pk_role_permissions').on(t.roleId, t.permissionId),
+  }),
+);
+
+/**
+ * Phạm vi dữ liệu — tầng RBAC thứ hai.
+ *
+ * QUYỀN trả lời "được làm gì", PHẠM VI trả lời "trên dữ liệu của ai". Hai câu
+ * hỏi độc lập: một trưởng phòng có `payroll:read` nhưng chỉ trên phòng mình.
+ * Gộp hai thứ vào một bảng quyền sẽ sinh ra tổ hợp nổ (mỗi quyền × mỗi phòng).
+ */
+export const DATA_SCOPE_LEVELS = ['COMPANY', 'BRANCH', 'DEPARTMENT', 'SELF'] as const;
+export type DataScopeLevel = (typeof DATA_SCOPE_LEVELS)[number];
+
+export const userRoles = pgTable(
+  'user_roles',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    roleId: uuid('role_id')
+      .notNull()
+      .references(() => roles.id, { onDelete: 'cascade' }),
+
+    scopeLevel: varchar('scope_level', { length: 20 }).notNull().default('SELF'),
+    /** Giá trị của phạm vi: mã chi nhánh, tên phòng… NULL với COMPANY/SELF. */
+    scopeValue: varchar('scope_value', { length: 120 }),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uqUserRoleScope: unique('uq_user_roles_user_role_scope').on(
+      t.userId,
+      t.roleId,
+      t.scopeValue,
+    ),
+    idxUser: index('idx_user_roles_user').on(t.userId),
+    chkScopeLevel: check(
+      'chk_user_roles_scope_level',
+      sql`${t.scopeLevel} IN ('COMPANY','BRANCH','DEPARTMENT','SELF')`,
+    ),
+  }),
+);
+
+/**
+ * Refresh token.
+ *
+ * LƯU HASH, KHÔNG LƯU TOKEN. Rò rỉ bảng này thì kẻ tấn công vẫn không đăng
+ * nhập được — đúng lý do ta băm mật khẩu.
+ *
+ * `replacedBy` + `revokedAt` cho phép phát hiện TÁI SỬ DỤNG: mỗi lần refresh
+ * sinh token mới và thu hồi token cũ. Nếu một token đã thu hồi được trình ra
+ * lần nữa thì nghĩa là token đã bị lộ (hoặc bị đánh cắp) — thu hồi cả họ.
+ */
+export const refreshTokens = pgTable(
+  'refresh_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+
+    /** SHA-256 của token. Khoá chính để tra cứu. */
+    tokenHash: varchar('token_hash', { length: 64 }).notNull(),
+    /** Họ token — mọi token sinh ra từ cùng một lần đăng nhập. */
+    familyId: uuid('family_id').notNull(),
+
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    replacedBy: uuid('replaced_by'),
+
+    ipAddress: varchar('ip_address', { length: 45 }),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uqTokenHash: unique('uq_refresh_tokens_hash').on(t.tokenHash),
+    idxUser: index('idx_refresh_tokens_user').on(t.userId),
+    idxFamily: index('idx_refresh_tokens_family').on(t.familyId),
+  }),
+);
+
+/**
+ * Giới hạn tốc độ — lưu trong DATABASE, không phải trong bộ nhớ.
+ *
+ * In-memory rate limiter reset mỗi lần restart và không dùng được khi chạy
+ * nhiều tiến trình: kẻ tấn công chỉ cần làm restart, hoặc gửi request tới
+ * tiến trình khác. Với một cơ chế an ninh thì "reset khi restart" là một lỗ.
+ */
+export const rateLimitBuckets = pgTable(
+  'rate_limit_buckets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Khoá của bucket: 'login:10.0.0.5', 'api:user-123'… */
+    bucketKey: varchar('bucket_key', { length: 160 }).notNull(),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    count: integer('count').notNull().default(0),
+  },
+  (t) => ({
+    uqBucketWindow: unique('uq_rate_limit_bucket_window').on(t.bucketKey, t.windowStart),
+  }),
+);
