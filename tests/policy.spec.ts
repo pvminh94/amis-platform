@@ -36,7 +36,7 @@ const { vnPitParamsSchema, vnPitJsonSchema, SEED_LEGACY_7B, SEED_VN_2026_5B } = 
 const { calculateProgressivePit, calculateTaxableIncome, roundVnd } = await import(
   '../src/engine/pit.js'
 );
-const { eq } = await import('drizzle-orm');
+const { and, eq } = await import('drizzle-orm');
 
 // ===========================================================================
 // 1. VALIDATE THAM SỐ — chặn cấu hình sai ngay lúc nhập
@@ -370,11 +370,14 @@ describe('Policy Registry (PostgreSQL thật)', () => {
     expect(after.version).toBe(2);
     expect(after.params.selfDeduction).toBe(15_500_000);
 
-    // Bản 1 vẫn ACTIVE nhưng khoảng đã bị cắt — lịch sử không mất
+    // Bản 1 vẫn ACTIVE nhưng khoảng đã bị cắt — lịch sử không mất.
+    // PHẢI lọc theo cả kindCode: số version chỉ duy nhất trong phạm vi một
+    // loại. Bug này đã xuất hiện hai lần (demo script rồi tới test này) —
+    // tra theo mình version sẽ vớ nhầm bản của loại chính sách khác.
     const v1 = await db
       .select()
       .from(policyVersions)
-      .where(eq(policyVersions.version, 1))
+      .where(and(eq(policyVersions.kindCode, KIND), eq(policyVersions.version, 1)))
       .limit(1);
     expect(v1[0]?.status).toBe('ACTIVE');
     expect(v1[0]?.effectiveTo).toBe('2026-07-01');

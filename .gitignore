@@ -5,3 +5,5 @@ dist/
 !.env.example
 drizzle/meta/
 *.log
+.next/
+tsconfig.tsbuildinfo

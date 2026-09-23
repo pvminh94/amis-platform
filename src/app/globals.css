@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0b0d10;
+  --panel: #12161b;
+  --panel-2: #171c22;
+  --border: #232a32;
+  --text: #e6edf3;
+  --muted: #8b98a5;
+  --accent: #3ddc97;
+  --accent-dim: #1f6f4f;
+  --warn: #f0b429;
+  --danger: #f0616d;
+}
+
+html, body { background: var(--bg); color: var(--text); }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", "Noto Sans", sans-serif;
+  font-feature-settings: "tnum" on, "lnum" on;
+}
+
+/* Số tiền phải canh phải và dùng chữ số đẳng rộng — đọc bảng lương mà số
+   không thẳng cột thì không so sánh được. */
+.num { font-variant-numeric: tabular-nums; text-align: right; }

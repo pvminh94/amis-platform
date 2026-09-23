@@ -60,7 +60,12 @@ export const vnPitParamsSchema = z
     voluntaryPensionCapMonthly: nonNegativeVnd,
 
     /** Trần thu nhập miễn thuế với khoản ăn giữa ca (VND/tháng). */
-    exemptMealCapMonthly: nonNegativeVnd.default(0),
+    // KHÔNG dùng .default(0) ở đây. Với z.infer, một trường có default sẽ có
+    // kiểu INPUT khác kiểu OUTPUT, và z.ZodType<T> (dùng T cho cả hai) sẽ báo
+    // lỗi variance ở mọi chỗ truyền validator. Quan trọng hơn về mặt nghiệp
+    // vụ: tham số pháp lý không nên có giá trị mặc định âm thầm — thiếu thì
+    // bắt người dùng khai báo rõ.
+    exemptMealCapMonthly: nonNegativeVnd,
   })
   .strict()
   // ---------------------------------------------------------------------------
