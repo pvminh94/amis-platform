@@ -47,6 +47,16 @@ export interface ShiftSegmentDef {
   endDayOffset?: number;
   /** Giờ nghỉ giữa đoạn (phút) — trừ khỏi giờ công */
   breakMinutes?: number;
+  /**
+   * Khung giờ nghỉ ("HH:mm"). Khai cái này thì giờ nghỉ chỉ bị trừ khi người ta
+   * THẬT SỰ làm việc vắt qua khung đó.
+   *
+   * Chỉ có `breakMinutes` mà không có khung thì engine buộc phải trừ trọn, và
+   * người làm 08:00–11:00 (chưa hề nghỉ trưa) vẫn bị trừ 60 phút — 3 giờ làm chỉ
+   * còn 2 giờ công.
+   */
+  breakStart?: string;
+  breakEnd?: string;
 }
 
 export type ShiftType = 'OFFICE' | 'NIGHT_CROSS_DAY' | 'SPLIT' | 'ROTATING' | 'FLEXIBLE';
@@ -73,6 +83,9 @@ export interface ResolvedSegment {
   absStart: number;
   absEnd: number;
   breakMinutes: number;
+  /** Khung giờ nghỉ tuyệt đối; null khi định nghĩa chỉ cho thời lượng. */
+  breakAbsStart: number | null;
+  breakAbsEnd: number | null;
   /** Phút công thực của đoạn (đã trừ nghỉ) */
   netMinutes: number;
   /** Phút của đoạn rơi vào khung giờ đêm */
@@ -171,7 +184,39 @@ function resolveSegment(
   }
 
   const absEndMin = endDayOffset * MIN_PER_DAY + endMin;
-  const breakMinutes = Math.max(0, def.breakMinutes ?? 0);
+
+  // Khung giờ nghỉ: nếu khai thì suy thời lượng TỪ khung, và kiểm tra khớp với
+  // breakMinutes khi cả hai đều có — hai con số mô tả cùng một sự thật nên chúng
+  // có thể lệch nhau, và lệch thì phải kêu chứ không được âm thầm chọn một.
+  let breakAbsStart: number | null = null;
+  let breakAbsEnd: number | null = null;
+  let breakMinutes = Math.max(0, def.breakMinutes ?? 0);
+  if (def.breakStart !== undefined || def.breakEnd !== undefined) {
+    if (def.breakStart === undefined || def.breakEnd === undefined) {
+      throw new ShiftError(
+        'BREAK_WINDOW_INCOMPLETE',
+        `Đoạn "${def.name}": phải khai cả breakStart và breakEnd, không chỉ một`,
+      );
+    }
+    breakAbsStart = parseTimeOfDay(def.breakStart);
+    const breakEndMin = parseTimeOfDay(def.breakEnd);
+    breakAbsEnd = breakEndMin <= breakAbsStart ? MIN_PER_DAY + breakEndMin : breakEndMin;
+    if (breakAbsStart < startMin || breakAbsEnd > absEndMin) {
+      throw new ShiftError(
+        'BREAK_OUTSIDE_SEGMENT',
+        `Đoạn "${def.name}": khung nghỉ ${def.breakStart}–${def.breakEnd} nằm ngoài đoạn giờ`,
+      );
+    }
+    const fromWindow = breakAbsEnd - breakAbsStart;
+    if (def.breakMinutes !== undefined && def.breakMinutes !== fromWindow) {
+      throw new ShiftError(
+        'BREAK_MISMATCH',
+        `Đoạn "${def.name}": breakMinutes (${def.breakMinutes}') khác độ dài khung nghỉ ` +
+          `${def.breakStart}–${def.breakEnd} (${fromWindow}')`,
+      );
+    }
+    breakMinutes = fromWindow;
+  }
   const grossMinutes = absEndMin - startMin;
   if (breakMinutes >= grossMinutes) {
     throw new ShiftError(
@@ -190,6 +235,8 @@ function resolveSegment(
     absStart: startMin,
     absEnd: absEndMin,
     breakMinutes,
+    breakAbsStart,
+    breakAbsEnd,
     netMinutes: grossMinutes - breakMinutes,
     nightMinutes,
     isNightSegment: nightMinutes > 0,

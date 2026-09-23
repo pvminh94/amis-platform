@@ -262,6 +262,83 @@ describe('dữ liệu ca sai phải bị chặn', () => {
   });
 });
 
+describe('khung giờ nghỉ', () => {
+  const withBreak = (over: Record<string, unknown> = {}) =>
+    resolveShift(
+      {
+        code: 'HC',
+        name: 'Hành chính',
+        type: 'OFFICE',
+        segments: [
+          { name: 'a', start: '08:00', end: '17:00', breakStart: '12:00', breakEnd: '13:00', ...over },
+        ],
+      },
+      D,
+    );
+
+  it('có khung thì suy thời lượng từ khung', () => {
+    const r = withBreak();
+    expect(r.segments[0]!.breakMinutes).toBe(60);
+    expect(r.segments[0]!.breakAbsStart).toBe(12 * 60);
+    expect(r.segments[0]!.breakAbsEnd).toBe(13 * 60);
+    expect(r.totalNetMinutes).toBe(480);
+  });
+
+  it('breakMinutes khớp với khung thì được chấp nhận', () => {
+    expect(withBreak({ breakMinutes: 60 }).segments[0]!.breakMinutes).toBe(60);
+  });
+
+  it('breakMinutes LỆCH khung → lỗi, không âm thầm chọn một', () => {
+    // Hai con số mô tả cùng một sự thật; chọn im lặng một cái thì giờ công sẽ
+    // sai mà không có gì báo.
+    try {
+      withBreak({ breakMinutes: 45 });
+      throw new Error('đáng lẽ phải ném');
+    } catch (e) {
+      expect((e as ShiftError).code).toBe('BREAK_MISMATCH');
+    }
+  });
+
+  it('chỉ khai một đầu khung → lỗi', () => {
+    try {
+      withBreak({ breakEnd: undefined });
+      throw new Error('đáng lẽ phải ném');
+    } catch (e) {
+      expect((e as ShiftError).code).toBe('BREAK_WINDOW_INCOMPLETE');
+    }
+  });
+
+  it('khung nghỉ nằm ngoài đoạn giờ → lỗi', () => {
+    try {
+      resolveShift(
+        {
+          code: 'X',
+          name: 'X',
+          type: 'OFFICE',
+          segments: [{ name: 'a', start: '08:00', end: '12:00', breakStart: '13:00', breakEnd: '14:00' }],
+        },
+        D,
+      );
+      throw new Error('đáng lẽ phải ném');
+    } catch (e) {
+      expect((e as ShiftError).code).toBe('BREAK_OUTSIDE_SEGMENT');
+    }
+  });
+
+  it('không khai khung thì breakAbs là null — engine chấm công sẽ trừ trọn', () => {
+    const r = resolveShift(OFFICE, D); // OFFICE chỉ có breakMinutes: 60
+    expect(r.segments[0]!.breakAbsStart).toBeNull();
+    expect(r.segments[0]!.breakAbsEnd).toBeNull();
+    expect(r.segments[0]!.breakMinutes).toBe(60);
+  });
+
+  it('ca seed HC có khung nghỉ 12:00–13:00', () => {
+    const hc = SEED_SHIFTS_VN.find((s) => s.regimeCode === 'HC')!;
+    expect(hc.segments[0]!.breakStart).toBe('12:00');
+    expect(hc.segments[0]!.breakEnd).toBe('13:00');
+  });
+});
+
 describe('absToCalendar — phút tuyệt đối ra ngày lịch', () => {
   it('phút < 1440 nằm cùng ngày', () => {
     expect(absToCalendar(D, 1320)).toEqual({ date: D, minutes: 1320 });

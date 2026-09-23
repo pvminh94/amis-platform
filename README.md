@@ -194,7 +194,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              444/444 test
+  ✓ vitest              495/495 test
 ```
 
 Test đáng chú ý:
@@ -216,6 +216,10 @@ Test đáng chú ý:
 - **Bất biến 3 ca 4 kíp**: quét 40 ngày liên tiếp, mỗi ngày đúng một kíp/ca và một kíp nghỉ — không ca trùng, không hở
 - Ca 12 tiếng 20:00→08:00 chỉ tính **480** phút đêm, không phải 960 — bắt lỗi đếm trùng khoảng đêm
 - Hai đoạn **chạm** nhau (12:00 ra, 12:00 vào) thì hợp lệ; **đè** nhau thì bị từ chối
+- Làm 08:00–11:00 → đúng **180** phút công, không bị trừ giờ nghỉ trưa mà họ không nghỉ
+- Hai quẹt 08:00 và 11:00 → 11:00 là giờ RA, không phải "quẹt vào lần hai"
+- Ngày nghỉ không đi làm → `WEEKLY_OFF`, **không phải** `ABSENT`; đi làm thì công chính = 0, toàn bộ là OT
+- Quẹt 03:00 không thuộc ca 08:00 → bị loại khỏi cửa sổ ghép cặp
 
 ### Chạy thử
 
@@ -269,6 +273,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **8** | ~~Cầu nối HR → sổ cái~~ ✅ ba bút toán kép cho một kỳ lương, định khoản là tham số, cân đối ép ở **hai** tầng, chống ghi trùng bằng khoá duy nhất | ✅ |
 | **9** | ~~Nối RBAC vào route~~ ✅ `requirePermission`, quyền tra từ DB không từ token, phân tách nhiệm vụ HR ≠ kế toán, `/login` + đổi mật khẩu bắt buộc, chặn open redirect | ✅ |
 | **10** | ~~Engine ca kíp~~ ✅ ca hành chính / ca gãy / **ca đêm vắt 0h** / xoay 3 ca 4 kíp, khung giờ đêm là tham số, định nghĩa ca là policy kind thứ tám | ✅ |
+| **11** | ~~Ghép cặp quẹt thẻ~~ ✅ FIRST-IN/LAST-OUT theo đoạn, suy giờ khi thiếu quẹt nhưng đánh dấu `MISSING_PUNCH`, OT tách 150/200/300% + phần đêm, grace period và mọi ngưỡng là tham số | ✅ |
 
 ---
 
@@ -305,6 +310,14 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Việc kiểm tra định nghĩa ca được giao cho chính engine.** `shiftParamsSchema.superRefine` gọi thẳng `resolveShift`: chồng lấn đoạn, giờ nghỉ vượt thời lượng, giờ ra không sau giờ vào, khung đêm vô lý — tất cả chỉ có MỘT bộ luật. Viết lại bộ thứ hai ở tầng validate thì sớm muộn chúng lệch nhau, và bản lệch nhau sẽ cho lưu một ca mà engine không resolve được — tức là lỗi nổ lúc đang xếp lịch chứ không phải lúc người dùng bấm lưu.
 
 **Một lệnh "ensure" mà làm mất dữ liệu thì không còn là ensure.** Bug có sẵn, tìm ra khi `CA_TOI` được đánh số v2 thay vì v1. Hai chỗ cùng sai: (1) nhánh INSERT của `ensureKind` bỏ sót `exclusiveByCode` nên lần tạo đầu tiên luôn nhận `false` từ default của cột; (2) route tạo phiên bản gọi `ensureKind` chỉ với `{code, nameVi, paramsSchema}`, và nhánh UPDATE làm `?? false` — nên **mỗi lần tạo một phiên bản mới, cờ độc quyền của loại đó bị âm thầm đặt về false**. PRINT và REPORT_DEF thoát nạn chỉ vì seed của chúng được chạy lại sau lần POST cuối. Sửa cả hai lớp: `ensureKind` giữ nguyên giá trị hiện có khi người gọi không chỉ định, và `VALIDATORS` khai rõ cờ để route tạo kind đúng ngay lần đầu. Cờ này quyết định cả phạm vi độc quyền lẫn cách đánh số phiên bản, nên sai nó thì `resolvePolicy` không trả lời được "bản nào đang hiệu lực".
+
+**FIRST-IN / LAST-OUT, và vì sao không suy hướng quẹt theo điểm giữa đoạn.** Bản port đầu tiên phân loại quẹt VÀO/RA hoàn toàn theo điểm giữa của đoạn, và nó phá đúng trường hợp phổ biến nhất: người làm 08:00–11:00 rồi về có hai quẹt 480 và 660, điểm giữa đoạn là 750 nên **cả hai đều bị coi là quẹt VÀO**, giờ ra được suy thành 17:00, và 3 giờ làm được tính thành 8 giờ công. Quy tắc đúng: từ hai quẹt trở lên thì lần đầu là VÀO và lần cuối là RA — đó chính là FIRST-IN/LAST-OUT, không cần đoán. Điểm giữa chỉ dùng khi có đúng một quẹt (không còn cách nào khác).
+
+**Giờ nghỉ phải là một KHUNG, không chỉ một thời lượng.** Chỉ có `breakMinutes = 60` thì engine buộc phải trừ trọn 60 phút cho mọi ca, kể cả người làm 08:00–11:00 chưa hề nghỉ trưa — 3 giờ làm còn 2 giờ công. Nên định nghĩa đoạn giờ nhận thêm `breakStart`/`breakEnd`, và engine chỉ trừ **phần giao** giữa khoảng đã làm và khung nghỉ: 08:00–11:00 trừ 0 phút, 08:00–12:30 trừ 30 phút, 08:00–14:00 trừ 60 phút. Khai cả `breakMinutes` lẫn khung mà hai con số lệch nhau thì **ném lỗi** chứ không âm thầm chọn một.
+
+**Thiếu quẹt thì suy ra, nhưng phải đánh dấu.** Quên quẹt xảy ra hàng ngày; coi là vắng thì oan cho người ta, còn im lặng bỏ qua thì mất khả năng kiểm soát. Nên giờ được suy từ kế hoạch, nguồn ghi `INFERRED`, và trạng thái thành `MISSING_PUNCH` để HR rà soát. Ca gãy còn được suy chéo đoạn: quên quẹt lúc đổi đoạn (rất hay xảy ra vì họ không rời xưởng) thì lấy quẹt VÀO của đoạn sau làm giờ RA của đoạn trước, kẹp về giờ kế hoạch.
+
+**Đến sớm không tự thành OT.** Giờ công chính bị KẸP vào khoảng kế hoạch; phần ngoài được tách riêng thành OT để nhân sự quyết định có tính hay không. Cộng thẳng thì người hay đến sớm sẽ có lương cao hơn người làm đúng giờ. Hai khoảng OT gối nhau được **gộp** trước khi tính — không gộp thì phần giao bị đếm hai lần và lương OT trả hai lần cho cùng một khoảng.
 
 **Vì sao không dùng Puppeteer/Chromium để xuất PDF.** Chromium ~170MB tải về và ~300MB RAM khi chạy, trong sandbox 2GB đang chạy chung PostgreSQL và dev server. Đổi lại ta được một file PDF — trong khi trình duyệt đã có sẵn "In → Lưu thành PDF" với chất lượng dàn trang tốt hơn hầu hết thư viện. ERPNext cũng làm đúng vậy: Print Format render HTML, trình duyệt lo phần PDF. Cái khó và đáng giá nằm ở TẦNG TEMPLATE, và đó là thứ `engine/print.ts` làm.
 

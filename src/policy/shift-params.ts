@@ -38,6 +38,14 @@ export const shiftSegmentSchema = z.object({
    */
   endDayOffset: z.number().int().min(0).max(1).optional(),
   breakMinutes: z.number().int().min(0).optional(),
+  breakStart: z
+    .string()
+    .regex(new RegExp(TIME_RE), 'Giờ phải theo dạng HH:mm')
+    .optional(),
+  breakEnd: z
+    .string()
+    .regex(new RegExp(TIME_RE), 'Giờ phải theo dạng HH:mm')
+    .optional(),
 });
 
 export const shiftParamsSchema = z
@@ -168,8 +176,19 @@ export const shiftJsonSchema = {
             type: 'integer',
             title: 'Giờ nghỉ (phút)',
             minimum: 0,
-            description: 'Trừ khỏi giờ công',
+            description:
+              'Trừ khỏi giờ công. Nếu khai khung nghỉ bên dưới thì con số này ' +
+              'phải bằng đúng độ dài khung.',
           },
+          breakStart: {
+            type: 'string',
+            title: 'Bắt đầu giờ nghỉ',
+            pattern: TIME_RE,
+            description:
+              'KHUYẾN NGHỊ KHAI. Có khung thì người làm nửa buổi không bị trừ ' +
+              'giờ nghỉ mà họ không hề nghỉ.',
+          },
+          breakEnd: { type: 'string', title: 'Kết thúc giờ nghỉ', pattern: TIME_RE },
         },
       },
     },
@@ -184,7 +203,16 @@ export const SEED_SHIFTS_VN: ShiftParams[] = [
     shiftType: 'OFFICE',
     nightStart: DEFAULT_NIGHT_START,
     nightEnd: DEFAULT_NIGHT_END,
-    segments: [{ name: 'Sáng-chiều', start: '08:00', end: '17:00', breakMinutes: 60 }],
+    segments: [
+      {
+        name: 'Sáng-chiều',
+        start: '08:00',
+        end: '17:00',
+        breakMinutes: 60,
+        breakStart: '12:00',
+        breakEnd: '13:00',
+      },
+    ],
   },
   {
     regimeCode: 'GAY',
