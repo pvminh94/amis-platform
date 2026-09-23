@@ -16,6 +16,7 @@ import {
   users,
 } from '@/db/schema';
 import {
+  checkPasswordStrength,
   generateRefreshToken,
   hashRefreshToken,
   hashPassword,
@@ -473,6 +474,60 @@ export async function createUser(
   }
 
   return { id: row!.id };
+}
+
+/**
+ * Đổi mật khẩu.
+ *
+ * Đây là lối ra DUY NHẤT cho cờ `mustChangePassword`. Không có nó thì tài khoản
+ * do admin tạo (mặc định bật cờ này) bị chặn khỏi mọi route vĩnh viễn — gate mà
+ * không có cửa mở thì không phải bảo mật, chỉ là tự khoá mình.
+ */
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+  db: Db = getDb(),
+): Promise<{ revokedSessions: number }> {
+  const found = await db
+    .select({ id: users.id, passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  const user = found[0];
+  if (!user) throw new AuthError('USER_NOT_FOUND', 'Không tìm thấy người dùng');
+
+  // Xác minh mật khẩu hiện tại — không cho phép đổi chỉ凭 vào access token còn
+  // hiệu lực. Máy để quên màn hình đang đăng nhập không được thành máy đổi mật khẩu.
+  if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+    throw new AuthError('WRONG_PASSWORD', 'Mật khẩu hiện tại không đúng');
+  }
+
+  const problems = checkPasswordStrength(newPassword);
+  if (problems.length > 0) {
+    throw new AuthError('WEAK_PASSWORD', problems.join('; '));
+  }
+
+  // Chặn đặt lại đúng mật khẩu cũ. Cờ mustChangePassword mà cho phép "đổi" thành
+  // chính nó thì lá cờ đó không có tác dụng gì.
+  if (await verifyPassword(newPassword, user.passwordHash)) {
+    throw new AuthError('SAME_PASSWORD', 'Mật khẩu mới phải khác mật khẩu hiện tại');
+  }
+
+  await db
+    .update(users)
+    .set({
+      passwordHash: await hashPassword(newPassword),
+      mustChangePassword: false,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, userId));
+
+  // Thu hồi MỌI phiên, kể cả phiên hiện tại. Nếu mật khẩu cũ đã lộ thì kẻ giữ
+  // nó đang có một refresh token hợp lệ — đổi mật khẩu mà không thu hồi thì việc
+  // đổi đó vô nghĩa. Client sẽ phải đăng nhập lại; đó là hành vi đúng.
+  const revoked = await revokeAllSessions(userId, db);
+  return { revokedSessions: revoked };
 }
 
 /** Thu hồi mọi phiên của một người dùng — dùng khi đổi mật khẩu hoặc nghi ngờ lộ. */

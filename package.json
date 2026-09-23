@@ -28,7 +28,8 @@
     "seed:auth": "tsx scripts/seed-auth.ts",
     "demo:auth": "tsx scripts/auth-flow.ts",
     "seed:gl": "tsx scripts/seed-gl.ts",
-    "demo:gl": "tsx scripts/gl-posting.ts"
+    "demo:gl": "tsx scripts/gl-posting.ts",
+    "demo:rbac": "tsx scripts/rbac-flow.ts"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.3.3",

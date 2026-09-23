@@ -7,11 +7,18 @@
 
 import { NextResponse } from 'next/server';
 import { getDb } from '@/db/client';
+import { authErrorResponse, requirePermission } from '@/lib/rbac';
 import { trialBalance } from '@/lib/gl';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
+  try {
+    await requirePermission(req, 'gl:read');
+  } catch (e) {
+    return authErrorResponse(e);
+  }
+
   const url = new URL(req.url);
   const year = url.searchParams.get('year');
   const month = url.searchParams.get('month');

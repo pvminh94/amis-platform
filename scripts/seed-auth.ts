@@ -44,6 +44,8 @@ const PERMISSIONS = [
   ['employee:read', 'Xem nhân viên'],
   ['employee:write', 'Thêm / sửa nhân viên'],
   ['user:manage', 'Quản trị người dùng và vai trò'],
+  ['gl:read', 'Xem sổ cái'],
+  ['gl:post', 'Ghi sổ cái từ bảng lương'],
 ] as const;
 
 // --- Vai trò ---------------------------------------------------------------
@@ -67,7 +69,13 @@ const ROLES = [
     code: 'CHIEF_ACCOUNTANT',
     nameVi: 'Kế toán trưởng',
     isSystem: false,
-    perms: ['policy:read', 'payroll:read', 'payroll:submit', 'approval:act', 'report:read', 'print:read'],
+    // PHÂN TÁCH NHIỆM VỤ: kế toán trưởng là người ghi sổ, KHÔNG phải người
+    // chạy lương. HR_ADMIN có payroll:run nhưng không có gl:post, và ngược lại —
+    // một người vừa tính lương vừa tự ghi sổ thì sai sót không ai phát hiện.
+    perms: [
+      'policy:read', 'payroll:read', 'payroll:submit', 'approval:act',
+      'report:read', 'print:read', 'gl:read', 'gl:post',
+    ],
   },
   {
     code: 'DEPT_HEAD',

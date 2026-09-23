@@ -12,6 +12,7 @@ import { getDb } from '@/db/client';
 import { GlError, postPayRun } from '@/lib/gl';
 import { isUuid } from '@/lib/uuid';
 import { PolicyError } from '@/policy/registry';
+import { authErrorResponse, requirePermission } from '@/lib/rbac';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,6 +30,16 @@ const STATUS: Record<string, number> = {
 };
 
 export async function POST(req: Request, ctx: { params: Promise<{ id: string }> }) {
+  // Ghi sổ là thao tác kế toán có hệ quả: đòi quyền riêng, và quyền được tra từ
+  // DB tại thời điểm này chứ không lấy từ token — người vừa bị cắt quyền phải
+  // mất nó ngay, không phải 15 phút sau khi token hết hạn.
+  let principal;
+  try {
+    principal = await requirePermission(req, 'gl:post');
+  } catch (e) {
+    return authErrorResponse(e);
+  }
+
   const { id } = await ctx.params;
   let body: { actorId?: string } = {};
   try {
@@ -47,7 +58,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
   }
 
   try {
-    const r = await postPayRun(id, { id: body.actorId ?? 'anonymous' }, getDb());
+    // Ghi ai đã ghi sổ theo DANH TÍNH THẬT từ token, không theo actorId client
+    // tự khai — trường "người ghi" mà client đặt được thì vô nghĩa khi truy cứu.
+    const r = await postPayRun(id, { id: principal.claims.sub }, getDb());
     return NextResponse.json({
       periodLabel: r.periodLabel,
       entries: r.entries.map((e) => ({

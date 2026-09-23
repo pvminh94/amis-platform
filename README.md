@@ -194,7 +194,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              374/374 test
+  ✓ vitest              395/395 test
 ```
 
 Test đáng chú ý:
@@ -209,6 +209,9 @@ Test đáng chú ý:
 - Chi tiết bảo hiểm lệch tổng đã lưu **một đồng** → ném lỗi, không ghi sổ
 - Kỳ lương không ai bị khấu trừ → **bỏ qua** bút toán khấu trừ, không tạo bút toán rỗng
 - Số hiệu bút toán trùng → ràng buộc `UNIQUE` ở PostgreSQL, giao dịch roll back
+- `AccessError` phân tách **401 và 403** — gộp lại thì client không biết nên đăng nhập lại hay đừng thử nữa
+- `authErrorResponse` **ném lại** lỗi lạ thay vì nuốt thành 401 — DB chết phải hiện ra là 500
+- `safeRedirectTarget` chặn `//evil.com`, `/\\evil.com`, `javascript:` — những cái **qua được** kiểm tra `startsWith('/')`
 
 ### Chạy thử
 
@@ -225,6 +228,7 @@ npm run seed:print          # seed mẫu in
 npm run seed:report         # seed 2 báo cáo (cần chạy payroll trước)
 npm run seed:gl             # danh mục tài khoản + định khoản lương
 npm run demo:gl             # ghi sổ kỳ 09/2026, in bút toán + bảng đối chiếu
+npm run demo:rbac           # 17 kiểm tra phân quyền + phân tách nhiệm vụ
 npm run seed:all            # cả bảy loại chính sách
 npm run payroll             # seed 12 nhân viên + tính kỳ 09/2026
 npm run demo:approval       # chạy thử quy trình duyệt end-to-end
@@ -258,6 +262,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 | **6** | Employee + PayRun thật: bảng `employees`, `payslips`, tính cả kỳ trong một transaction, in phiếu từ số liệu đã lưu | ✅ |
 | **7** | JWT + refresh HttpOnly có xoay vòng, bcrypt salt 10, RBAC 2 tầng (quyền + phạm vi dữ liệu), rate limit trong DB, security headers | ✅ |
 | **8** | ~~Cầu nối HR → sổ cái~~ ✅ ba bút toán kép cho một kỳ lương, định khoản là tham số, cân đối ép ở **hai** tầng, chống ghi trùng bằng khoá duy nhất | ✅ |
+| **9** | ~~Nối RBAC vào route~~ ✅ `requirePermission`, quyền tra từ DB không từ token, phân tách nhiệm vụ HR ≠ kế toán, `/login` + đổi mật khẩu bắt buộc, chặn open redirect | ✅ |
 
 ---
 
@@ -274,6 +279,20 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 **Chống ghi trùng bằng khoá duy nhất, không bằng kiểm tra ở tầng ứng dụng.** `entry_no` là khoá duy nhất trong PostgreSQL, nên lần ghi thứ hai nổ ràng buộc và giao dịch roll back. Cách quen thuộc — đọc xem kỳ này đã ghi chưa rồi mới ghi — luôn có cửa race: hai yêu cầu cùng đọc được "chưa", rồi cả hai cùng ghi, và sổ có gấp đôi chi phí lương. Ràng buộc ở DB thì không có cửa nào, vì nó kiểm tra ngay tại thời điểm ghi.
 
 **Fixture kế toán phải lấy từ dữ liệu đã tính thật.** Fixture đầu tiên tôi bịa số và nó tự mâu thuẫn: `siEmployer = 4.532.500` nhưng bốn khoản chi tiết cộng lại chỉ 4.392.130. Bút toán lập tức không cân và test nổ ngay — bất biến đã làm đúng việc. "Cộng tay cho khớp" là cách nhanh nhất để tạo ra một bộ số trông đúng nhưng sai; nay engine còn kiểm tra thẳng điều này (`SI_BREAKDOWN_MISMATCH`), vì hai con số đó mô tả cùng một sự thật và được lưu ở hai chỗ nên chúng *có thể* lệch nhau.
+
+**Vì sao quyền nằm trong database chứ không trong token.** Access token có `roles` nhưng không có `permissions`, và đó là cố ý. Quyền có thể bị thu hồi; nếu token tự tuyên bố "tôi có `gl:post`" thì người vừa bị cắt quyền vẫn giữ nó tới 15 phút sau. Với thao tác ghi sổ kế toán thì 15 phút đó là quá dài. Nên token chỉ chứng minh **danh tính** — thứ không đổi trong 15 phút — còn quyền luôn tra lại DB tại thời điểm yêu cầu. Trả giá hai câu truy vấn mỗi request để đổi lấy việc thu hồi quyền có hiệu lực ngay.
+
+**Phân tách nhiệm vụ: người tính lương không được ghi sổ.** `HR_ADMIN` có `payroll:run` nhưng **không** có `gl:post`; `CHIEF_ACCOUNTANT` thì ngược lại. Một người vừa chạy lương vừa tự ghi sổ thì sai sót không có ai phát hiện — đây là nguyên tắc kiểm soát nội bộ, không phải sở thích phân quyền. `demo:rbac` kiểm chứng cả hai chiều: HR_ADMIN bị 403 khi ghi sổ, và CHIEF_ACCOUNTANT qua được.
+
+**Gate mà không có cửa mở thì không phải bảo mật.** Cờ `mustChangePassword` chặn mọi route — nhưng nếu không có endpoint đổi mật khẩu thì mọi tài khoản do admin tạo bị khoá vĩnh viễn. Đây là lỗ hổng thật tôi tự tạo ra rồi tự phát hiện khi thử đăng nhập: gate hoạt động hoàn hảo và nhốt luôn người dùng ở trong. Lối ra là `POST /api/auth/change-password`, và `allowMustChangePassword` chỉ được bật ở đúng một chỗ đó — `requirePermission` **không nhận** tham số này, nên không route nào vô tình mở được.
+
+**Đổi mật khẩu thì thu hồi mọi phiên.** Nếu mật khẩu cũ đã lộ thì kẻ giữ nó đang có một refresh token hợp lệ; đổi mật khẩu mà không thu hồi thì việc đổi đó vô nghĩa. Client phải đăng nhập lại — đó là hành vi đúng, không phải bất tiện.
+
+**`/login?next=` là chỗ kinh điển nhất để mở open redirect.** Người dùng đã quen bấm qua trang đăng nhập nên không đọc URL. Kiểm tra `startsWith('/')` là KHÔNG ĐỦ: `//evil.com` qua được và trình duyệt hiểu thành "tới evil.com"; `/\\evil.com` cũng vậy vì một số trình duyệt đổi `\` thành `/`. `safeRedirectTarget` chặn cả hai, cộng `javascript:`, `data:` và ký tự điều khiển.
+
+**Token trong localStorage là đánh đổi có ý thức.** Nếu có XSS thì access token lộ. Điều làm cho nó chấp nhận được: token chỉ sống 15 phút, còn refresh token **đã** nằm trong cookie HttpOnly với `Path=/api/auth`. Thứ bị lộ là một vé 15 phút, không phải phiên 14 ngày.
+
+**Demo không được phép phá thứ nó vừa chứng minh là không phá được.** `approval-flow.ts` dọn dẹp bằng `DELETE FROM approval_requests`, và vì `approval_audit` có FK `ON DELETE CASCADE` nên lệnh đó kéo theo việc xoá bản ghi audit — đúng thứ trigger bất biến cấm. Hệ quả: demo chạy được MỘT lần, lần thứ hai nổ ngay ở dòng dọn dẹp. Lỗi không nằm ở trigger mà ở demo; sửa bằng cách dùng `docRef` mới mỗi lần chạy thay vì xoá lịch sử.
 
 **Vì sao không dùng Puppeteer/Chromium để xuất PDF.** Chromium ~170MB tải về và ~300MB RAM khi chạy, trong sandbox 2GB đang chạy chung PostgreSQL và dev server. Đổi lại ta được một file PDF — trong khi trình duyệt đã có sẵn "In → Lưu thành PDF" với chất lượng dàn trang tốt hơn hầu hết thư viện. ERPNext cũng làm đúng vậy: Print Format render HTML, trình duyệt lo phần PDF. Cái khó và đáng giá nằm ở TẦNG TEMPLATE, và đó là thứ `engine/print.ts` làm.
 

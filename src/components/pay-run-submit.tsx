@@ -3,29 +3,37 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Alert } from '@/components/ui';
+import { api } from '@/lib/client-token';
 
-/** Nộp một kỳ lương ra duyệt. Chỉ hiện khi kỳ còn ở DRAFT. */
+/**
+ * Nộp một kỳ lương ra duyệt. Chỉ hiện khi kỳ còn ở DRAFT.
+ *
+ * Ô "người nộp" đã bị BỎ. Trước đây client tự khai tên người nộp và server ghi
+ * thẳng vào audit — nghĩa là ai cũng khai mình là người khác được. Nay server lấy
+ * danh tính từ access token, nên ô đó không còn ý gì để nhập.
+ */
 export function PayRunSubmit({ payRunId, label }: { payRunId: string; label: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [actor, setActor] = useState('kt01');
 
   const submit = async () => {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/pay-runs/${payRunId}/submit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actorId: actor || 'anonymous' }),
-      });
+      const res = await api(`/api/pay-runs/${payRunId}/submit`, { method: 'POST', json: {} });
       const data = (await res.json()) as {
         requestId?: string;
-        error?: { message?: string };
+        error?: { code?: string; message?: string };
       };
       if (!res.ok || !data.requestId) {
-        setError(data.error?.message ?? `Lỗi ${res.status}`);
+        // 403 và 401 đáng được nói rõ: "chưa đăng nhập" và "không có quyền nộp"
+        // dẫn tới hai hành động khác nhau, và người dùng không tự suy ra được.
+        if (data.error?.code === 'FORBIDDEN') {
+          setError('Bạn không có quyền nộp bảng lương (cần payroll:submit).');
+        } else {
+          setError(data.error?.message ?? `Lỗi ${res.status}`);
+        }
         return;
       }
       router.push(`/approvals/${data.requestId}`);
@@ -38,12 +46,6 @@ export function PayRunSubmit({ payRunId, label }: { payRunId: string; label: str
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <input
-        className="w-40 rounded-md border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm outline-none focus:border-[var(--accent-dim)]"
-        value={actor}
-        onChange={(e) => setActor(e.target.value)}
-        placeholder="Người nộp"
-      />
       <button
         type="button"
         disabled={busy}

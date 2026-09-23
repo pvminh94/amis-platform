@@ -31,11 +31,19 @@ console.log('\n' + '═'.repeat(78));
 console.log('  QUY TRÌNH DUYỆT — ngưỡng là dữ liệu, máy trạng thái là code');
 console.log('═'.repeat(78) + '\n');
 
-// Dọn đơn cũ của script này để chạy lại được
-await db.execute(sql`DELETE FROM approval_requests WHERE doc_type IN ('EXPENSE','PAYRUN')`);
+// Script này CHẠY LẠI ĐƯỢC mà không cần dọn dẹp.
+//
+// Bản trước dọn bằng `DELETE FROM approval_requests`, và vì approval_audit có
+// FK ON DELETE CASCADE nên lệnh đó kéo theo việc xoá bản ghi audit — đúng thứ
+// mà trigger bất biến cấm. Hệ quả: demo chạy được MỘT lần, lần thứ hai nổ ngay
+// ở dòng dọn dẹp. Lỗi không phải ở trigger (nó đang làm đúng việc) mà ở chỗ demo
+// tự cho phép mình phá thứ nó vừa chứng minh là không phá được.
+//
+// Cách sửa: mỗi lần chạy dùng docRef mới. Không đụng tới lịch sử đã ghi.
+const newId = () => crypto.randomUUID();
 
 // --- 1. Đơn chi nhiều cấp --------------------------------------------------
-const EXPENSE_ID = '00000000-0000-4000-8000-000000000001';
+const EXPENSE_ID = newId();
 const sub = await submitApproval({
   docType: 'EXPENSE',
   docRef: EXPENSE_ID,
@@ -95,7 +103,7 @@ try {
 
 // --- 3. Duyệt thiếu người phải bị chặn -------------------------------------
 console.log('\n[3] APPROVE mà không có người thực hiện:');
-const EXP2 = '00000000-0000-4000-8000-000000000002';
+const EXP2 = newId();
 const sub2 = await submitApproval({
   docType: 'EXPENSE',
   docRef: EXP2,
@@ -135,7 +143,7 @@ console.log('\n[5] Loại chứng từ chưa cấu hình ngưỡng:');
 try {
   await submitApproval({
     docType: 'KHONG_CO_LUAT',
-    docRef: '00000000-0000-4000-8000-000000000003',
+    docRef: newId(),
     docLabel: 'X',
     value: 1,
     actor: 'nv0001',
