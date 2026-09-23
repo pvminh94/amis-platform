@@ -12,6 +12,8 @@
 
 import { NextResponse, type NextRequest } from 'next/server';
 
+import { buildCsp } from '@/lib/csp';
+
 /**
  * Danh sách origin được phép gọi API từ trình duyệt.
  *
@@ -38,19 +40,8 @@ const SECURITY_HEADERS: Record<string, string> = {
   // HTML mà bị đoán thành text/html thì thành XSS.
   'Cross-Origin-Resource-Policy': 'same-origin',
   'Cross-Origin-Opener-Policy': 'same-origin',
-  // CSP: không inline script. Đây là hàng phòng thủ cuối nếu có một chỗ quên
-  // escape dữ liệu — engine in đã escape mọi thứ, nhưng không nên chỉ dựa vào đó.
-  'Content-Security-Policy': [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    "font-src 'self' data:",
-    "connect-src 'self'",
-    "frame-ancestors 'none'",
-    "base-uri 'self'",
-    "form-action 'self'",
-  ].join('; '),
+  // Xem src/lib/csp.ts — CSP phải khác nhau giữa dev và production.
+  'Content-Security-Policy': buildCsp(),
 };
 
 /** Trang KHÔNG đòi đăng nhập. Mọi thứ khác đều đòi. */
