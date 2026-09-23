@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getDb } from '@/db/client';
 import { createVersion, PolicyError } from '@/policy/registry';
 import { vnPitParamsSchema, vnPitJsonSchema } from '@/policy/tax-params';
+import { vnSiParamsSchema, vnSiJsonSchema } from '@/policy/si-params';
 import { ensureKind } from '@/policy/registry';
 
 export const dynamic = 'force-dynamic';
@@ -9,12 +10,34 @@ export const dynamic = 'force-dynamic';
 /**
  * Bảng tra loại chính sách → validator.
  *
- * Đây là chỗ DUY NHẤT cần thêm code khi có loại chính sách mới: một dòng.
+ * Đây là chỗ DUY NHẤT cần thêm code khi có loại chính sách mới: MỘT DÒNG.
  * Form trên UI thì tự sinh từ JSON Schema, không phải viết.
+ *
+ * `nameVi` nằm trong map chứ không phải một lệnh ba ngôi ở dưới: trước đây thêm
+ * một loại phải sửa HAI chỗ, và chỗ thứ hai rất dễ quên — quên thì tên loại
+ * chính sách hiển thị trên giao diện là mã thô "VN_BHXH".
  */
-const VALIDATORS: Record<string, { schema: unknown; json: Record<string, unknown> }> = {
-  VN_PIT: { schema: vnPitParamsSchema, json: vnPitJsonSchema },
-  TEST_PIT: { schema: vnPitParamsSchema, json: vnPitJsonSchema },
+const VALIDATORS: Record<
+  string,
+  { nameVi: string; schema: unknown; json: Record<string, unknown> }
+> = {
+  VN_PIT: {
+    nameVi: 'Thuế thu nhập cá nhân Việt Nam',
+    schema: vnPitParamsSchema,
+    json: vnPitJsonSchema,
+  },
+  TEST_PIT: {
+    nameVi: 'Thuế TNCN (bản dùng cho test)',
+    schema: vnPitParamsSchema,
+    json: vnPitJsonSchema,
+  },
+  // ↓↓↓ MỘT DÒNG NÀY là tất cả những gì tầng API cần cho một loại chính sách
+  //     mới. Giao diện /policies/VN_BHXH/new tự sinh form từ vnSiJsonSchema.
+  VN_BHXH: {
+    nameVi: 'Bảo hiểm xã hội Việt Nam',
+    schema: vnSiParamsSchema,
+    json: vnSiJsonSchema,
+  },
 };
 
 export async function POST(req: Request, ctx: { params: Promise<{ kind: string }> }) {
@@ -35,7 +58,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ kind: string }
     await ensureKind(
       {
         code: kind,
-        nameVi: kind === 'VN_PIT' ? 'Thuế thu nhập cá nhân Việt Nam' : kind,
+        nameVi: entry.nameVi,
         paramsSchema: entry.json,
       },
       db,

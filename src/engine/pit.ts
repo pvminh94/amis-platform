@@ -21,17 +21,11 @@
  */
 
 import type { VnPitParams } from '../policy/tax-params.js';
+import { roundVnd } from './money.js';
 
-/** Làm tròn nửa lên theo đồng — quy ước tiền tệ VN, không dùng float. */
-export function roundVnd(value: number): number {
-  if (!Number.isFinite(value)) {
-    throw new RangeError(
-      `roundVnd nhận giá trị không hữu hạn: ${value}. ` +
-        `Tiền tệ không được phép là NaN hay Infinity.`,
-    );
-  }
-  return Math.sign(value) * Math.round(Math.abs(value) + Number.EPSILON);
-}
+export { roundVnd };
+
+
 
 export interface ProgressivePitResult {
   /** Số thuế phải nộp (VND). */

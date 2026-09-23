@@ -15,19 +15,7 @@ import { vnPitJsonSchema, vnPitParamsSchema } from '../src/policy/tax-params.js'
 
 const SCHEMA = vnPitJsonSchema as unknown as JsonSchema;
 
-/**
- * `vnPitParamsSchema` là ZodEffects chứ không phải ZodObject, vì nó kết thúc
- * bằng `.superRefine(...)` (các quy tắc kiểm tra chéo giữa các bậc thuế).
- * ZodEffects không có `.shape` — phải unwrap một lớp để lấy ZodObject bên trong.
- *
- * Viết helper thay vì truy cập `_def.schema` rải rác: nếu nâng cấp Zod mà cấu
- * trúc nội bộ đổi, chỉ một chỗ này cần sửa.
- */
-function shapeOf(schema: unknown): Record<string, { isOptional(): boolean }> {
-  const def = (schema as { _def: { typeName?: string; schema?: unknown } })._def;
-  const target = def.typeName === 'ZodObject' ? schema : def.schema;
-  return (target as { shape: Record<string, { isOptional(): boolean }> }).shape;
-}
+import { shapeOf, expectSchemasAgree } from './helpers.js';
 
 describe('defaultsFromSchema — sinh giá trị khởi tạo cho form', () => {
   it('sinh đủ MỌI khoá khai báo trong JSON Schema (không sót trường nào)', () => {
@@ -72,20 +60,10 @@ describe('JSON Schema và Zod schema KHÔNG ĐƯỢC lệch nhau', () => {
    * giá trị bị thiếu âm thầm. Cả hai đều phá vỡ lời hứa "thêm một loại chính
    * sách = thêm một schema". Test này bắt lỗi đó ngay khi thêm trường mới.
    */
-  it('cùng tập tên trường', () => {
-    const fromJson = Object.keys(SCHEMA.properties ?? {}).sort();
-    const fromZod = Object.keys(shapeOf(vnPitParamsSchema)).sort();
-    expect(fromJson).toEqual(fromZod);
-  });
-
-  it('cùng danh sách trường bắt buộc', () => {
-    const jsonRequired = [...(SCHEMA.required ?? [])].sort();
-    // Zod: trường không optional → required
-    const zodRequired = Object.entries(shapeOf(vnPitParamsSchema))
-      .filter(([, s]) => !s.isOptional())
-      .map(([k]) => k)
-      .sort();
-    expect(jsonRequired).toEqual(zodRequired);
+  it('cùng tập tên trường và cùng danh sách bắt buộc', () => {
+    // expectSchemasAgree ném lỗi kèm tên trường lệch nhau — dễ đọc hơn diff mảng
+    const { jsonFields } = expectSchemasAgree(vnPitJsonSchema, vnPitParamsSchema);
+    expect(jsonFields).toContain('exemptMealCapMonthly');
   });
 
   it('bậc thuế: JSON Schema và Zod cùng mô tả 3 thuộc tính', () => {

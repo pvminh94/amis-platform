@@ -123,6 +123,14 @@ src/app/policies/[kind]/page.tsx  dòng thời gian phiên bản + audit
 src/app/policies/[kind]/new/page.tsx  form tạo bản mới
 src/app/api/policies/**          GET/POST policies, versions, activate
 tests/schema-form.spec.ts        chống lệch giữa JSON Schema và Zod schema
+
+src/policy/si-params.ts     ★ LOẠI CHÍNH SÁCH THỨ HAI: VN_BHXH (Zod + JSON Schema)
+src/engine/si.ts            calculateSocialInsurance — trần BHXH theo mức tham
+                            chiếu, trần BHTN theo lương tối thiểu vùng
+src/engine/money.ts         roundVnd + clampBase (dùng chung cho cả hai engine)
+scripts/seed-bhxh.ts        seed VN_BHXH, idempotent
+tests/si.spec.ts            20 test cho engine + ràng buộc pháp lý BHXH
+tests/helpers.ts            expectSchemasAgree — so JSON Schema với Zod
 ```
 
 ### Đã kiểm chứng
@@ -134,7 +142,7 @@ npm run verify
   ✓ tsc --noEmit        0 lỗi
   ✓ drizzle-kit migrate áp dụng từ DB trắng
   ✓ db:extras           EXCLUDE constraint
-  ✓ vitest              58/58 test
+  ✓ vitest              77/77 test
 ```
 
 Test đáng chú ý:
@@ -153,7 +161,8 @@ cp .env.example .env        # điền DATABASE_URL
 npm install
 npm run db:setup            # migrate + EXCLUDE constraint
 npm run test                # 58 test
-npm run demo                # demo đổi luật
+npm run demo                # demo đổi luật thuế
+npm run seed:bhxh           # seed loại chính sách VN_BHXH
 npm run dev                 # giao diện tại http://localhost:3100
 ```
 
@@ -176,7 +185,7 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 |---|---|---|
 | **1** | Policy Registry + engine thuế | ✅ xong, đã kiểm chứng |
 | **2** | Next.js UI: trang quản lý chính sách, form tự sinh từ JSON Schema | ✅ xong, đã kiểm chứng |
-| **3** | Mở rộng loại chính sách: BHXH (tỷ lệ, trần 20×), ngưỡng duyệt, công thức lương | ⬜ |
+| **3** | Mở rộng loại chính sách: ~~BHXH~~ ✅ · ngưỡng duyệt ⬜ · công thức lương ⬜ | 🔄 đang làm |
 | **4** | Workflow designer (React Flow) + rule engine biểu thức | ⬜ |
 | **5** | Report builder + print format (HTML/CSS → PDF) | ⬜ |
 | **6** | Chuyển nghiệp vụ HRM sang platform (Employee, PayRun thành entity có chính sách) | ⬜ |
@@ -185,7 +194,9 @@ Bản 2027 được **tạo và kích hoạt ngay trong script** — không sử
 
 ## Ghi chú thiết kế
 
-**Hai schema phải luôn đi cùng nhau.** Mỗi loại chính sách có HAI mô tả: JSON Schema (giao diện dùng để tự sinh form) và Zod schema (backend dùng để validate). Chúng phải khớp nhau tuyệt đối. Bug thật đã xảy ra: khi bỏ `.default(0)` khỏi `exemptMealCapMonthly` ở Zod (tham số pháp lý không được có giá trị ngầm định), trường đó thành bắt buộc — nhưng `required` trong JSON Schema không được cập nhật. Hệ quả: form hiển thị nó là tuỳ chọn, người dùng bỏ trống, trường số trống được gửi lên là `0`, và Zod **chấp nhận 0** vì `minimum = 0`. Trần miễn thuế ăn giữa ca thành 0đ, người lao động bị đánh thuế oan trên tiền ăn ca, và không một dòng log nào báo. `tests/schema-form.spec.ts` canh đúng điểm lệch này, và `validateAgainstSchema` chặn ở form — chỉ form mới phân biệt được "quên điền" với "cố ý đặt 0".
+**Bằng chứng cho "thêm một loại = một dòng".** `VN_BHXH` là loại chính sách thứ hai, và là phép thử thật cho kiến trúc này vì nó KHÔNG có form viết tay. Kiểm chứng bằng `grep`: không một file `.tsx` nào trong `src/` chứa `socialInsurance`, `referenceSalary`, `regionalMinimumWages` hay bất kỳ tên trường nào của bảo hiểm — `SchemaForm` không biết bảo hiểm là gì, nó chỉ đọc JSON Schema. Thứ duy nhất thêm vào tầng API là một dòng trong map `VALIDATORS` (và `nameVi` đã được gộp vào chính map đó, vì trước đây phải sửa hai chỗ). Mở `/policies/VN_BHXH/new`: form tự sinh, gồm cả object lồng nhau cho tỷ lệ NLĐ/NSDLĐ và bảng thêm/xoá dòng cho lương tối thiểu vùng.
+
+**Vì sao hai schema phải luôn đi cùng nhau.** Mỗi loại chính sách có HAI mô tả: JSON Schema (giao diện dùng để tự sinh form) và Zod schema (backend dùng để validate). Chúng phải khớp nhau tuyệt đối. Bug thật đã xảy ra: khi bỏ `.default(0)` khỏi `exemptMealCapMonthly` ở Zod (tham số pháp lý không được có giá trị ngầm định), trường đó thành bắt buộc — nhưng `required` trong JSON Schema không được cập nhật. Hệ quả: form hiển thị nó là tuỳ chọn, người dùng bỏ trống, trường số trống được gửi lên là `0`, và Zod **chấp nhận 0** vì `minimum = 0`. Trần miễn thuế ăn giữa ca thành 0đ, người lao động bị đánh thuế oan trên tiền ăn ca, và không một dòng log nào báo. `tests/schema-form.spec.ts` canh đúng điểm lệch này, và `validateAgainstSchema` chặn ở form — chỉ form mới phân biệt được "quên điền" với "cố ý đặt 0".
 
 **Vì sao không dùng shadcn CLI.** CLI kéo `radix-ui` và hàng chục dependency vào sandbox ~1,4 GB đang chạy chung PostgreSQL. Các primitive cần dùng (Card, Button, Badge, Field, Alert) đơn giản hơn tự viết nhiều lần là trả giá đó.
 
