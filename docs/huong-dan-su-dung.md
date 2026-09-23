@@ -88,7 +88,7 @@ thuế, kích hoạt nó, và duyệt lương**. Không cần tài khoản.
 |---|---|---|
 | Node.js | ≥ 20 | v20.20.2 |
 | npm | ≥ 10 | 10.8.2 |
-| PostgreSQL | ≥ 15 (khuyến nghị 18) | 18 |
+| PostgreSQL | kiểm chứng với **18**; bản thấp hơn **chưa kiểm chứng** | 18 |
 | RAM | ≥ 2 GB | — |
 | Docker | chỉ nếu chạy theo mục 9 | **CHƯA KIỂM CHỨNG** |
 
@@ -115,7 +115,66 @@ cd amis-platform
 npm install
 ```
 
-### Bước 2 — Tạo database
+### Bước 2 — Cài PostgreSQL (nếu chưa có) rồi tạo database
+
+#### 2a. Kiểm tra đã có chưa
+
+```bash
+id postgres          # "unknown user postgres" => CHƯA cài
+which psql
+systemctl status postgresql 2>/dev/null | head -3
+```
+
+Nếu `id postgres` báo **`unknown user postgres`** thì PostgreSQL chưa được cài —
+user hệ thống `postgres` là do package PostgreSQL tạo ra. **Phải cài trước**, nếu
+không lệnh `sudo -u postgres psql` bên dưới sẽ thất bại với đúng lỗi đó.
+
+> Máy đang chạy ERPNext thường chỉ có **MariaDB**, không có PostgreSQL — hai cái
+> này không thay thế được nhau.
+
+#### 2b. Cài
+
+**Ubuntu / Debian:**
+
+```bash
+sudo apt update
+sudo apt install -y postgresql postgresql-contrib
+sudo systemctl enable --now postgresql
+```
+
+**RHEL / Rocky / Alma / CentOS:**
+
+```bash
+sudo dnf install -y postgresql-server postgresql-contrib
+sudo postgresql-setup --initdb
+sudo systemctl enable --now postgresql
+```
+
+Kiểm tra lại — **phải thấy user `postgres` và service đang chạy:**
+
+```bash
+id postgres                              # kỳ vọng: uid=... (postgres)
+sudo systemctl is-active postgresql      # kỳ vọng: active
+psql --version
+```
+
+> **Về phiên bản:** hướng dẫn này được kiểm chứng với **PostgreSQL 18**. Ubuntu
+> 22.04 cài mặc định bản 14, 24.04 bản 16 — **chưa kiểm chứng** trên các bản đó,
+> nhưng schema chỉ dùng những tính năng rất cũ (`EXCLUDE`, chỉ mục unique từng
+> phần, `jsonb`, `numeric`, `timestamptz`) nên nhiều khả năng chạy được. Nếu muốn
+> chắc chắn, thêm repo PGDG:
+> ```bash
+> sudo apt install -y curl ca-certificates
+> sudo install -d /usr/share/postgresql-common/pgdg
+> sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+>   https://www.postgresql.org/media/keys/ACCC4CF8.asc
+> echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+>   https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+>   | sudo tee /etc/apt/sources.list.d/pgdg.list
+> sudo apt update && sudo apt install -y postgresql-18
+> ```
+
+#### 2c. Tạo user và database
 
 ```bash
 sudo -u postgres psql <<'SQL'
@@ -123,6 +182,25 @@ CREATE USER amis WITH PASSWORD 'doi-mat-khau-that-manh';
 CREATE DATABASE amis_platform OWNER amis;
 SQL
 ```
+
+> `doi-mat-khau-that-manh` ở đây là **chỗ để bạn điền mật khẩu thật**, không phải
+> chuỗi nên gõ nguyên văn. Nhớ dùng **đúng mật khẩu đó** trong `DATABASE_URL` ở
+> Bước 3.
+
+Kiểm tra nối được **bằng chính user `amis`** (không phải `postgres`):
+
+```bash
+psql "postgresql://amis:doi-mat-khau-that-manh@127.0.0.1:5432/amis_platform" -c 'select 1;'
+# kỳ vọng in ra một dòng có số 1
+```
+
+Nếu báo `password authentication failed`: sửa `pg_hba.conf` để cho phép `scram-sha-256`
+qua TCP, rồi `sudo systemctl reload postgresql`.
+
+#### 2d. (Cách khác) Không cài Postgres, dùng Docker
+
+`docker-compose.yml` đã kèm sẵn `postgres:18-alpine`, nên nếu máy có Docker thì
+**bỏ qua cả Bước 2 lẫn Bước 4** và nhảy thẳng tới [mục 9](#9-chạy-bằng-docker).
 
 ### Bước 3 — Tạo file `.env`
 
