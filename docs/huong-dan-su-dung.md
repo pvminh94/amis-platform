@@ -12,7 +12,7 @@
 
 1. [Trả lời thẳng: dùng được chưa?](#1-trả-lời-thẳng-dùng-được-chưa)
 2. [Chuẩn bị máy](#2-chuẩn-bị-máy)
-3. [Cài đặt từ đầu](#3-cài-đặt-từ-đầu)
+3. [Cài đặt từ đầu](#3-cài-đặt-từ-đầu) — ⚡ có `setup.sh` một lệnh
 4. [Đăng nhập lần đầu](#4-đăng-nhập-lần-đầu)
 5. [Đi từng trang](#5-đi-từng-trang)
 6. [Quy trình nghiệp vụ đầy đủ](#6-quy-trình-nghiệp-vụ-đầy-đủ)
@@ -104,6 +104,50 @@ psql --version
 
 ## 3. Cài đặt từ đầu
 
+### ⚡ Cách nhanh — MỘT LỆNH (khuyến nghị)
+
+```bash
+git clone https://github.com/pvminh94/amis-platform.git
+cd amis-platform
+sudo bash scripts/setup.sh
+```
+
+Script tự làm hết 7 bước: cài PostgreSQL (apt/dnf) → khởi động service → tìm đúng
+cluster giữ cổng 5432 → ép `scram-sha-256` và sửa `pg_hba.conf` nếu cần → tạo
+user + database → sinh `.env` kèm `JWT_SECRET` ngẫu nhiên → `npm install`,
+`db:setup`, `seed:all`.
+
+**Chạy lại được nhiều lần** (idempotent): bước nào xong rồi thì bỏ qua, và **không
+xoá dữ liệu** đã có.
+
+Biến môi trường để tuỳ chỉnh:
+
+| Biến | Mặc định | Ý nghĩa |
+|---|---|---|
+| `DB_NAME` | `amis_platform` | Tên database |
+| `DB_USER` | `amis` | User PostgreSQL |
+| `DB_PORT` | `5432` | Cổng |
+| `DB_PASS` | `AmisDb2026x` | **ĐỔI nếu máy có người khác dùng** |
+| `SKIP_SEED=1` | — | Bỏ qua nạp dữ liệu mẫu (cho hệ thống thật) |
+
+Ví dụ cài cho hệ thống thật, không dữ liệu mẫu:
+
+```bash
+sudo DB_PASS='mat-khau-manh-cua-ban' SKIP_SEED=1 bash scripts/setup.sh
+```
+
+**Đã kiểm chứng bằng cách chạy thật** trên PostgreSQL 17.11 cài mới hoàn toàn
+qua apt (xem cuối mục này).
+
+> Script cần `sudo` vì phải cài package và sửa cấu hình PostgreSQL. Nó **không**
+> đòi bạn biết mật khẩu user `postgres` — mọi lệnh quản trị đi qua Unix socket với
+> xác thực `peer`.
+
+---
+
+### Cách thủ công — từng bước
+
+Dùng khi muốn hiểu từng bước, hoặc khi script không chạy được trên hệ của bạn.
 Toàn bộ lệnh chạy trong thư mục dự án. **Đừng bỏ qua bước nào** — thứ tự seed có
 phụ thuộc.
 
@@ -328,6 +372,47 @@ npm run build && npm start    # production, cũng cổng 3100
 
 Mở <http://localhost:3100>. **Phải bị đẩy về `/login`.** Nếu vào thẳng được trang
 nào đó thì có gì sai — dừng lại.
+
+---
+
+### Kết quả kiểm chứng script (chạy thật, không mô phỏng)
+
+Chạy `sudo bash scripts/setup.sh` trên môi trường **chưa từng có PostgreSQL**,
+apt cài ra bản 17.11:
+
+```
+▶ 1/7  ✓ Đã cài: psql (PostgreSQL) 17.11
+▶ 3/7  ✓ Cluster mặc định đã nghe cổng 5432
+▶ 4/7  ✓ password_encryption = scram-sha-256
+       ✓ pg_hba.conf đã cho phép xác thực mật khẩu qua loopback
+▶ 5/7  ✓ Đã tạo user 'amis'  ✓ Đã tạo database 'amis_platform'
+       ✓ Nối được bằng user 'amis' qua 127.0.0.1:5432
+▶ 6/7  ✓ Đã tạo .env (chmod 600, chủ sở hữu user)
+▶ 7/7  [✓] migrations applied successfully!
+       ✓ 2 ràng buộc EXCLUDE đã áp dụng (by_kind + by_code)
+       ✓ KHỚP tổng của lô (406.681.904 đ)
+```
+
+Chạy **lần hai** trên cùng máy: bỏ qua cài đặt, giữ nguyên database, không ghi đè
+`.env`, migration vẫn áp dụng sạch.
+
+App chạy trên database đó:
+
+```
+/api/health   → {"status":"ok","database":"ok","migrations":14}
+login         → HTTP 200
+8/8 trang     → HTTP 200 (có phiên)
+/payroll      → HTTP 307 (không phiên)
+```
+
+**Hai bug tìm được nhờ chạy thật** (và đã sửa):
+
+1. Script chạy bằng `sudo` nên `.env` thuộc về **root** với mode 600 — user thường,
+   tức người sẽ chạy `npm run dev`, **không đọc được**. Mọi bước trước đó đều
+   xanh, rồi app chết với "DATABASE_URL chưa được đặt" dù file nằm ngay đó. Nay
+   script `chown` về `$SUDO_USER`.
+2. Dòng hướng dẫn `ssh -L …` in ra thiếu tên user vì `who am i` trả rỗng khi chạy
+   dưới sudo. Nay dùng `$SUDO_USER`.
 
 ---
 
